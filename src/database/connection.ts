@@ -1,9 +1,16 @@
 import { Pool, PoolClient } from 'pg';
+import { parse as parseConnString } from 'pg-connection-string';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
+const parsed = parseConnString(config.DATABASE_URL);
+
 const pool = new Pool({
-  connectionString: config.DATABASE_URL,
+  host: parsed.host ?? undefined,
+  port: parsed.port ? Number(parsed.port) : 5432,
+  user: parsed.user,
+  password: parsed.password,
+  database: parsed.database ?? undefined,
   max: config.DATABASE_MAX_CONNECTIONS,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
