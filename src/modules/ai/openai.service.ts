@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger';
 import { AIContext, AIResponse, EmotionType } from '../../types';
 import { loadAllPrompts } from './prompts.loader';
 import { retryWithBackoff } from '../../utils/helpers';
+import { sanitizeMessages, sanitizeShortTermHistory, sanitizeMemories } from '../../utils/message.sanitizer';
 
 const client = new OpenAI({
   apiKey: config.OPENAI_API_KEY,
@@ -20,8 +21,9 @@ export async function generateAmandaResponse(context: AIContext): Promise<AIResp
   ];
 
   // Adicionar memórias relevantes como contexto
-  if (context.relevantMemories.length > 0) {
-    const memorySummary = context.relevantMemories
+  const cleanMemories = sanitizeMemories(context.relevantMemories);
+  if (cleanMemories.length > 0) {
+    const memorySummary = cleanMemories
       .map((m, i) => `[Memória ${i + 1}]: ${m}`)
       .join('\n');
     messages.push({
@@ -31,19 +33,21 @@ export async function generateAmandaResponse(context: AIContext): Promise<AIResp
   }
 
   // Histórico de mensagens recentes (short-term memory)
-  for (const msg of context.shortTermMemory) {
+  for (const msg of sanitizeShortTermHistory(context.shortTermMemory)) {
     messages.push({
       role: msg.role as 'user' | 'assistant',
       content: msg.content,
     });
   }
 
+  const safeMessages = sanitizeMessages(messages);
+
   try {
     const response = await retryWithBackoff(
       () =>
         client.chat.completions.create({
           model: config.OPENAI_MODEL,
-          messages,
+          messages: safeMessages,
           max_tokens: config.OPENAI_MAX_TOKENS,
           temperature: config.OPENAI_TEMPERATURE,
           presence_penalty: 0.6,
@@ -65,7 +69,7 @@ export async function generateAmandaResponse(context: AIContext): Promise<AIResp
     return { content, tokensUsed, detectedEmotion, shouldTriggerHandoff, suggestedFollowup };
   } catch (err) {
     logger.warn({ err }, 'Falha no modelo principal, tentando fallback');
-    return generateFallbackResponse(messages, context);
+    return generateFallbackResponse(safeMessages, context);
   }
 }
 
@@ -75,7 +79,7 @@ async function generateFallbackResponse(
 ): Promise<AIResponse> {
   const response = await client.chat.completions.create({
     model: config.OPENAI_FALLBACK_MODEL,
-    messages,
+    messages: sanitizeMessages(messages),
     max_tokens: config.OPENAI_MAX_TOKENS,
     temperature: config.OPENAI_TEMPERATURE,
   });
@@ -115,17 +119,21 @@ export async function analyzeImage(
   imageUrl: string,
   prompt: string = 'Descreva esta peça de roupa detalhadamente: estilo, cor, tipo de peça, ocasião adequada.'
 ): Promise<string> {
+  const messages = sanitizeMessages([
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: imageUrl, detail: 'low' } },
+      ],
+    },
+  ]);
+
+  if (messages.length === 0) return '';
+
   const response = await client.chat.completions.create({
     model: config.OPENAI_MODEL,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: imageUrl, detail: 'low' } },
-        ],
-      },
-    ],
+    messages,
     max_tokens: 500,
   });
   return response.choices[0]?.message?.content ?? '';
@@ -143,16 +151,20 @@ export async function generateAudioResponse(text: string): Promise<Buffer> {
 }
 
 export async function detectEmotion(message: string): Promise<EmotionType> {
+  const messages = sanitizeMessages([
+    {
+      role: 'system',
+      content:
+        'Analise a emoção principal desta mensagem. Responda APENAS com uma palavra: neutral, happy, anxious, irritated, undecided, excited, sad',
+    },
+    { role: 'user', content: message },
+  ]);
+
+  if (messages.length === 0) return 'neutral';
+
   const response = await client.chat.completions.create({
     model: config.OPENAI_FALLBACK_MODEL,
-    messages: [
-      {
-        role: 'system',
-        content:
-          'Analise a emoção principal desta mensagem. Responda APENAS com uma palavra: neutral, happy, anxious, irritated, undecided, excited, sad',
-      },
-      { role: 'user', content: message },
-    ],
+    messages,
     max_tokens: 10,
     temperature: 0,
   });
