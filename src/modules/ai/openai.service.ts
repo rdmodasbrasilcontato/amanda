@@ -13,7 +13,7 @@ const client = new OpenAI({
 });
 
 export async function generateAmandaResponse(context: AIContext): Promise<AIResponse> {
-  const prompts = await loadAllPrompts();
+  const prompts = loadAllPrompts();
   const systemPrompt = buildSystemPrompt(prompts, context);
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [

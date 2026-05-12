@@ -50,6 +50,7 @@ app.use((req, _res, next) => {
 // ── Rotas ──
 app.use('/health', healthRoutes);
 app.use('/webhook', webhookRoutes);
+app.use('/webhooks', webhookRoutes);
 app.use('/admin', adminRoutes);
 
 // ── 404 ──

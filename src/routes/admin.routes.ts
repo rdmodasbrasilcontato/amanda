@@ -130,7 +130,8 @@ router.put('/produtos/:id', async (req: Request, res: Response) => {
      images=$7, stock_quantity=$8, active=$9, updated_at=NOW() WHERE id=$10 RETURNING *`,
     [name, description, price, category, sizes, colors, images, stock_quantity, active, req.params['id']]
   );
-  if (updated) await updateProductEmbedding(req.params['id']!);
+  const id = req.params['id'];
+  if (updated && typeof id === 'string') await updateProductEmbedding(id);
   res.json(updated);
 });
 

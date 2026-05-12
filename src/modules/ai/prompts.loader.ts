@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 interface Prompts {
+  [key: string]: string;
   identity: string;
   personality: string;
   emotional: string;
