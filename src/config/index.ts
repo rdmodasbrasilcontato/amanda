@@ -12,7 +12,7 @@ const envSchema = z.object({
   OPENAI_WHISPER_MODEL: z.string().default('whisper-1'),
   OPENAI_TTS_MODEL: z.string().default('tts-1'),
   OPENAI_TTS_VOICE: z.string().default('nova'),
-  OPENAI_MAX_TOKENS: z.coerce.number().default(1024),
+  OPENAI_MAX_TOKENS: z.coerce.number().default(1500),
   OPENAI_TEMPERATURE: z.coerce.number().default(0.7),
   OPENAI_TIMEOUT_MS: z.coerce.number().default(45000),
 
