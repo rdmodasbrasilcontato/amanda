@@ -4,8 +4,23 @@ import { config } from '../../config';
 import { logger } from '../../utils/logger';
 import { sleep, generateTypingDelay, retryWithBackoff, splitIntoBalloons } from '../../utils/helpers';
 
+// Monta a URL base completa com instanceId e token no path. A Z-API exige:
+// https://api.z-api.io/instances/{INSTANCE_ID}/token/{TOKEN}/send-text
+// Se o usuário já incluir o path completo no .env, não duplicamos.
+function buildZapiBaseUrl(): string {
+  const raw = (config.ZAPI_BASE_URL || 'https://api.z-api.io').replace(/\/+$/, '');
+  if (raw.includes('/instances/') && raw.includes('/token/')) {
+    return raw;
+  }
+  return `${raw}/instances/${config.ZAPI_INSTANCE_ID}/token/${config.ZAPI_TOKEN}`;
+}
+
+const ZAPI_FULL_BASE_URL = buildZapiBaseUrl();
+
+logger.info({ baseURL: ZAPI_FULL_BASE_URL }, 'Z-API client inicializado');
+
 const zapiClient: AxiosInstance = axios.create({
-  baseURL: config.ZAPI_BASE_URL,
+  baseURL: ZAPI_FULL_BASE_URL,
   headers: {
     'Client-Token': config.ZAPI_CLIENT_TOKEN,
     'Content-Type': 'application/json',
@@ -36,13 +51,20 @@ export async function sendTextMessage(phone: string, text: string): Promise<stri
       3,
       2000
     );
+
+    if (response.data?.error) {
+      logger.error(
+        { phone, responseData: response.data, status: response.status },
+        'Z-API aceitou request mas retornou erro no body'
+      );
+      return null;
+    }
+
     logger.info(
       {
         phone,
         zaapId: response.data?.zaapId,
         messageId: response.data?.messageId,
-        responseData: response.data,
-        status: response.status,
       },
       'Mensagem texto enviada via Z-API'
     );
