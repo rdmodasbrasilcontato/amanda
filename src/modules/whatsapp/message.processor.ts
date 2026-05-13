@@ -16,7 +16,7 @@ import { config } from '../../config';
 import { extractFirstName, normalizePhone } from '../../utils/helpers';
 
 export async function processIncomingMessage(payload: ZApiWebhookPayload): Promise<void> {
-  if (payload.fromMe || payload.isGroupMsg) return;
+  if (payload.isGroupMsg) return;
 
   const phoneRaw = String(payload.phone);
   if (
@@ -29,6 +29,16 @@ export async function processIncomingMessage(payload: ZApiWebhookPayload): Promi
 
   const phone = normalizePhone(payload.phone);
   const name = payload.senderName || undefined;
+
+  // Mensagens do staff (fromMe + não enviadas pela própria API/Amanda):
+  // tratar apenas para toggle de handoff (palavra-chave Oii / Até mais)
+  // e refresh do timestamp se handoff já estiver ativo. Nunca responder.
+  if (payload.fromMe) {
+    const fromApi = (payload as any).fromApi === true;
+    if (fromApi) return; // mensagem enviada pela própria Amanda via Z-API
+    await handleStaffMessage(phone, name, payload);
+    return;
+  }
 
   logger.info({ phone, type: payload.type }, 'Mensagem recebida');
 
@@ -201,6 +211,24 @@ export async function processIncomingMessage(payload: ZApiWebhookPayload): Promi
   }
 
   logger.info({ phone, tokensUsed: aiResponse.tokensUsed }, 'Mensagem processada com sucesso');
+}
+
+async function handleStaffMessage(
+  phone: string,
+  name: string | undefined,
+  payload: ZApiWebhookPayload
+): Promise<void> {
+  try {
+    const client = await getOrCreateClient(phone, name);
+    const conversation = await getOrCreateConversation(client.id);
+    await checkAndHandleHandoff(conversation.id, client.id, phone, payload);
+    logger.info(
+      { phone, text: payload.text?.message },
+      'Mensagem do staff processada (handoff toggle)'
+    );
+  } catch (err) {
+    logger.error({ err, phone }, 'Erro ao processar mensagem do staff');
+  }
 }
 
 async function getOrCreateConversation(

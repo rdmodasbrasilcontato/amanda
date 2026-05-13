@@ -2,14 +2,14 @@ import cron from 'node-cron';
 import { query } from '../database/connection';
 import { logger } from '../utils/logger';
 
-// Reativar handoffs que ficaram sem resposta humana por mais de 1 hora
+// Reativar handoffs que ficaram sem atividade humana por mais de 2 horas
 export function startHandoffTimeoutJob(): void {
   cron.schedule('*/15 * * * *', async () => {
     try {
       const expired = await query<{ id: string }>(
         `SELECT id FROM conversas
          WHERE handoff_active = TRUE
-           AND handoff_started_at < NOW() - INTERVAL '1 hour'`
+           AND handoff_started_at < NOW() - INTERVAL '2 hours'`
       );
 
       for (const conv of expired) {
@@ -35,5 +35,5 @@ export function startHandoffTimeoutJob(): void {
     }
   });
 
-  logger.info('Job de handoff timeout iniciado (a cada 15 minutos)');
+  logger.info('Job de handoff timeout iniciado (a cada 15 min, expira após 2h)');
 }

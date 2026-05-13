@@ -1,10 +1,32 @@
 import { query, queryOne } from '../../database/connection';
 import { ZApiWebhookPayload } from '../../types';
-import { handoffKeywords, config } from '../../config';
 import { logger } from '../../utils/logger';
-import { sendTextWithTyping } from '../whatsapp/zapi.service';
 
-const REACTIVATE_KEYWORDS = ['liberar', 'voltar', 'ia', 'retomar', 'amanda'];
+// Palavras-chave de controle do agente (digitadas pelo staff no WhatsApp)
+// "Oii"   → desliga Amanda (handoff humano ativado)
+// "Até mais" → liga Amanda de volta
+const PAUSE_KEYWORDS = ['oii'];
+const RESUME_KEYWORDS = ['ate mais', 'até mais'];
+
+// Tempo máximo de pausa automática: 2 horas
+const HANDOFF_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+
+function normalize(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim();
+}
+
+function matchesKeyword(text: string, keywords: string[]): boolean {
+  const normalized = normalize(text);
+  return keywords.some(kw => {
+    const nkw = normalize(kw);
+    // Match exato ou como primeira "palavra" da mensagem
+    return normalized === nkw || normalized.startsWith(nkw + ' ') || normalized.startsWith(nkw + '\n');
+  });
+}
 
 export async function checkAndHandleHandoff(
   conversationId: string,
@@ -23,20 +45,24 @@ export async function checkAndHandleHandoff(
 
   if (!conversation) return false;
 
-  const messageText = payload.text?.message?.toLowerCase() ?? '';
+  const messageText = payload.text?.message ?? '';
 
-  // Checar se mensagem é de humano ativando handoff
+  // Mensagem do staff (fromMe sem ser da própria API)
   if (payload.fromMe) {
-    if (handoffKeywords.some(kw => messageText.includes(kw))) {
-      await activateHandoff(conversationId, clientId, messageText);
+    // RESUME tem prioridade sobre PAUSE (caso ambos batam)
+    if (matchesKeyword(messageText, RESUME_KEYWORDS)) {
+      await deactivateHandoff(conversationId, 'human_resume');
+      logger.info({ conversationId, phone }, 'Amanda RELIGADA pelo staff (palavra-chave "Até mais")');
       return true;
     }
 
-    if (REACTIVATE_KEYWORDS.some(kw => messageText.includes(kw))) {
-      await deactivateHandoff(conversationId);
+    if (matchesKeyword(messageText, PAUSE_KEYWORDS)) {
+      await activateHandoff(conversationId, clientId, 'staff_keyword_oii');
+      logger.info({ conversationId, phone }, 'Amanda DESLIGADA pelo staff (palavra-chave "Oii")');
       return true;
     }
 
+    // Qualquer outra mensagem do staff: se já está em handoff, refresca o timer
     if (conversation.handoff_active) {
       await query(
         'UPDATE conversas SET handoff_started_at = NOW() WHERE id = $1',
@@ -44,18 +70,25 @@ export async function checkAndHandleHandoff(
       );
       return true;
     }
+
+    // Staff falando sem palavra-chave e sem handoff ativo: ativa handoff
+    // (humano entrou na conversa → pausa Amanda por 2h)
+    await activateHandoff(conversationId, clientId, 'staff_message');
+    logger.info(
+      { conversationId, phone },
+      'Amanda DESLIGADA automaticamente — humano entrou na conversa'
+    );
+    return true;
   }
 
-  // Se handoff ativo, verificar reativação automática por timeout (1 hora)
+  // Mensagem do cliente — verificar se handoff está ativo
   if (conversation.handoff_active) {
     const startedAt = conversation.handoff_started_at;
     if (startedAt) {
       const elapsed = Date.now() - new Date(startedAt).getTime();
-      const oneHour = 60 * 60 * 1000;
-
-      if (elapsed > oneHour) {
-        await deactivateHandoff(conversationId);
-        logger.info({ conversationId }, 'Handoff reativado automaticamente por timeout');
+      if (elapsed > HANDOFF_TIMEOUT_MS) {
+        await deactivateHandoff(conversationId, 'auto_timeout');
+        logger.info({ conversationId }, 'Handoff expirado (2h) — Amanda reativada automaticamente');
         return false;
       }
     }
@@ -87,14 +120,12 @@ async function activateHandoff(
     await query(
       `INSERT INTO handoffs (conversation_id, client_id, started_by)
        VALUES ($1, $2, $3)`,
-      [conversationId, clientId, 'human_agent']
+      [conversationId, clientId, activatedBy]
     );
   }
-
-  logger.info({ conversationId }, 'Handoff humano ativado');
 }
 
-async function deactivateHandoff(conversationId: string): Promise<void> {
+async function deactivateHandoff(conversationId: string, resolvedBy: string): Promise<void> {
   await query(
     `UPDATE conversas
      SET status = 'active', handoff_active = FALSE, handoff_started_at = NULL,
@@ -105,12 +136,10 @@ async function deactivateHandoff(conversationId: string): Promise<void> {
 
   await query(
     `UPDATE handoffs
-     SET status = 'resolved', resolved_at = NOW(), resolved_by = 'auto_timeout'
+     SET status = 'resolved', resolved_at = NOW(), resolved_by = $2
      WHERE conversation_id = $1 AND status = 'active'`,
-    [conversationId]
+    [conversationId, resolvedBy]
   );
-
-  logger.info({ conversationId }, 'Handoff encerrado — Amanda reativada');
 }
 
 export async function getActiveHandoffs(): Promise<Record<string, unknown>[]> {
