@@ -4,7 +4,7 @@ import { getOrCreateClient, updateClientLastContact, updateClientEmotion, saveIn
 import { getShortTermMemory, addMessageToShortTerm } from '../memory/short-term.service';
 import { searchRelevantMemories } from '../memory/vector.service';
 import { generateAmandaResponse, detectEmotion } from '../ai/openai.service';
-import { sendTextWithTyping, sendAudioMessage, markMessageAsRead } from './zapi.service';
+import { sendTextWithTyping, sendBalloonsWithTyping, sendAudioMessage, markMessageAsRead } from './zapi.service';
 import { generateAudioResponse } from '../ai/openai.service';
 import { processAudioMessage, processImageMessage, processDocumentMessage } from './media.handler';
 import { query, queryOne } from '../../database/connection';
@@ -168,7 +168,7 @@ export async function processIncomingMessage(payload: ZApiWebhookPayload): Promi
     const audioBuffer = await generateAudioResponse(aiResponse.content);
     await sendAudioMessage(phone, audioBuffer);
   } else {
-    await sendTextWithTyping(phone, aiResponse.content);
+    await sendBalloonsWithTyping(phone, aiResponse.content);
   }
 
   // 16. Salvar interação na memória longa

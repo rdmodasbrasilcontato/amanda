@@ -2,7 +2,7 @@ import axios, { AxiosInstance } from 'axios';
 import FormData from 'form-data';
 import { config } from '../../config';
 import { logger } from '../../utils/logger';
-import { sleep, generateTypingDelay, retryWithBackoff } from '../../utils/helpers';
+import { sleep, generateTypingDelay, retryWithBackoff, splitIntoBalloons } from '../../utils/helpers';
 
 const zapiClient: AxiosInstance = axios.create({
   baseURL: config.ZAPI_BASE_URL,
@@ -49,6 +49,22 @@ export async function sendTextWithTyping(phone: string, text: string): Promise<s
   await sendTyping(phone);
   await sleep(delay);
   return sendTextMessage(phone, text);
+}
+
+export async function sendBalloonsWithTyping(
+  phone: string,
+  text: string
+): Promise<Array<string | null>> {
+  const balloons = splitIntoBalloons(text);
+  if (balloons.length === 0) return [];
+
+  const ids: Array<string | null> = [];
+  for (const balloon of balloons) {
+    const id = await sendTextWithTyping(phone, balloon);
+    ids.push(id);
+    await sleep(600);
+  }
+  return ids;
 }
 
 export async function sendTyping(phone: string): Promise<void> {

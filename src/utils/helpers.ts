@@ -89,6 +89,53 @@ export async function retryWithBackoff<T>(
   throw lastError;
 }
 
+const ALLOWED_EMOJIS = ['❤️', '🥰', '✨', '💕', '😍', '💖', '🌸', '🤍', '👗', '🛍️'];
+const ALLOWED_EMOJI_SET = new Set(ALLOWED_EMOJIS);
+
+const EMOJI_REGEX =
+  /\p{Extended_Pictographic}(\u{FE0F}|\u{200D}\p{Extended_Pictographic})*/gu;
+
+function sanitizeEmojis(text: string): string {
+  let kept = 0;
+  return text.replace(EMOJI_REGEX, (match) => {
+    if (kept >= 1) return '';
+    if (ALLOWED_EMOJI_SET.has(match)) {
+      kept += 1;
+      return match;
+    }
+    return '';
+  });
+}
+
+export function splitIntoBalloons(raw: string): string[] {
+  if (!raw) return [];
+
+  let parts = raw
+    .split(/\n{2,}|\|{2,}|<\s*br\s*\/?\s*>/gi)
+    .map((p) => p.replace(/^\s*bal(ã|a)o\s*\d+\s*[:\-–]\s*/i, '').trim())
+    .filter(Boolean);
+
+  if (parts.length < 2) {
+    const sentences = raw
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split(/(?<=[.!?…])\s+(?=[A-Za-zÀ-ÿ0-9])/);
+    if (sentences.length >= 2) {
+      const mid = Math.ceil(sentences.length / 2);
+      parts = [sentences.slice(0, mid).join(' '), sentences.slice(mid).join(' ')]
+        .map((p) => p.trim())
+        .filter(Boolean);
+    }
+  }
+
+  if (parts.length > 3) {
+    const merged = [parts[0]!, parts.slice(1, -1).join(' '), parts[parts.length - 1]!];
+    parts = merged;
+  }
+
+  return parts.map(sanitizeEmojis).map((p) => p.trim()).filter(Boolean);
+}
+
 export function generateTypingDelay(messageLength: number): number {
   const base = config.AMANDA_TYPING_MIN_MS;
   const max = config.AMANDA_TYPING_MAX_MS;

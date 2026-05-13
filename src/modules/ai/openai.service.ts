@@ -186,8 +186,12 @@ CONTEXTO DA CLIENTE:
 ${context.longTermSummary ? `- Resumo do histórico: ${context.longTermSummary}` : ''}
 ${context.productContext ? `- Produtos consultados: ${context.productContext}` : ''}
 
-Responda APENAS com a próxima mensagem da Amanda. Não inclua nome, prefixo ou explicação.
-Seja breve, natural e humana. Máximo 3-4 linhas.
+FORMATO DE SAÍDA — OBRIGATÓRIO:
+Responda APENAS com a próxima mensagem da Amanda, picotada em 2 ou 3 balões.
+Separe cada balão por UMA LINHA EM BRANCO (\\n\\n). Sem rótulos, sem numeração, sem "Balão 1:".
+Cada balão: no máximo 2 frases curtas. No máximo 1 emoji por balão.
+Use apenas estes emojis: ❤️ 🥰 ✨ 💕 😍 💖 🌸 🤍 👗 🛍️.
+Nunca responda em um único parágrafo longo.
 `;
 
   return [...parts, clientSection].join('\n\n---\n\n');
