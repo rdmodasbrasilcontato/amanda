@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Amanda AI — Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0D1117;
+      --surface: #1A1F2B;
+      --primary: #2563EB;
+      --accent: #00D4FF;
+      --text: #F5F7FA;
+      --muted: #8B92A5;
+      --border: rgba(255,255,255,0.08);
+      --green: #22c55e;
+      --red: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; margin: 0; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+    .nav-btn { color: var(--muted); display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border-radius: 8px; font-size: 14px; font-weight: 500; transition: all .2s; border: none; background: none; cursor: pointer; text-align: left; }
+    .nav-btn:hover { color: var(--text); background: rgba(37,99,235,.1); }
+    .nav-btn.active { color: var(--text); background: rgba(37,99,235,.15); border-left: 3px solid var(--primary); padding-left: 9px; }
+    .btn-primary { background: var(--primary); color: white; border: none; border-radius: 8px; padding: 8px 18px; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity .2s; }
+    .btn-primary:hover { opacity: .85; }
+    .btn-outline { background: rgba(255,255,255,.06); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; }
+    .btn-outline:hover { background: rgba(255,255,255,.1); }
+    .badge { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .badge-on  { background: rgba(34,197,94,.15); color: var(--green); }
+    .badge-off { background: rgba(239,68,68,.15); color: var(--red); }
+    .badge-handoff { background: rgba(0,212,255,.15); color: var(--accent); }
+    textarea { background: rgba(255,255,255,.04); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 14px; font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.6; resize: vertical; width: 100%; }
+    textarea:focus { outline: none; border-color: var(--primary); }
+    input[type="text"] { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 14px; font-size: 13px; }
+    input[type="text"]:focus { outline: none; border-color: var(--primary); }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 3px; }
+    .toggle { position: relative; display: inline-block; width: 44px; height: 24px; cursor: pointer; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider { position: absolute; inset: 0; background: var(--red); border-radius: 24px; transition: .3s; }
+    .toggle-slider:before { content:''; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: .3s; }
+    input:checked + .toggle-slider { background: var(--green); }
+    input:checked + .toggle-slider:before { transform: translateX(20px); }
+    section { display: none; }
+    section.active { display: block; }
+    .toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 10px; font-size: 13px; font-weight: 600; color: white; z-index: 999; animation: slideUp .3s ease; }
+    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .drop-zone { border: 2px dashed var(--border); border-radius: 12px; padding: 40px; text-align: center; cursor: pointer; transition: border-color .2s; }
+    .drop-zone:hover { border-color: var(--primary); }
+    .drop-zone.dragover { border-color: var(--accent); background: rgba(0,212,255,.05); }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 12px 16px; font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+    td { padding: 12px 16px; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,.04); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+  </style>
+</head>
+<body style="display:flex; height:100vh; overflow:hidden;">
+
+<!-- ════════════ SIDEBAR ════════════ -->
+<aside style="width:240px; flex-shrink:0; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; height:100vh; overflow-y:auto;">
+
+  <!-- Logo -->
+  <div style="padding:20px 16px; border-bottom:1px solid var(--border); min-height:96px; display:flex; align-items:center; justify-content:center;">
+    <img id="logo-img" src="" alt="Logo" style="max-height:72px; max-width:100%; object-fit:contain; border-radius:8px; display:none;">
+    <div id="logo-text" style="text-align:center;">
+      <div style="font-size:15px; font-weight:800; color:var(--accent); letter-spacing:-.3px;">RD Modas Brasil</div>
+      <div style="font-size:11px; color:var(--muted); margin-top:2px;">Amanda AI</div>
+    </div>
+  </div>
+
+  <!-- Amanda toggle -->
+  <div style="padding:12px 16px; border-bottom:1px solid var(--border);">
+    <div class="card" style="padding:12px 14px; display:flex; align-items:center; justify-content:space-between;">
+      <div>
+        <div style="font-size:10px; font-weight:700; color:var(--muted); letter-spacing:.08em;">AMANDA</div>
+        <div id="global-status-text" style="font-size:13px; font-weight:700; color:var(--green); margin-top:2px;">● LIGADA</div>
+      </div>
+      <label class="toggle" title="Ligar/Desligar Amanda">
+        <input type="checkbox" id="global-toggle" onchange="toggleAmanda(this.checked)" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Nav -->
+  <nav style="flex:1; padding:12px 10px; display:flex; flex-direction:column; gap:2px;">
+    <button class="nav-btn active" id="nav-inicio" onclick="showSection('inicio')">
+      <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+      Início
+    </button>
+    <button class="nav-btn" id="nav-conversas" onclick="showSection('conversas')">
+      <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+      Conversas
+      <span id="badge-convs" style="margin-left:auto; background:rgba(37,99,235,.3); color:var(--accent); padding:1px 8px; border-radius:999px; font-size:11px;">0</span>
+    </button>
+    <button class="nav-btn" id="nav-qrcode" onclick="showSection('qrcode')">
+      <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/></svg>
+      WhatsApp QR
+    </button>
+    <button class="nav-btn" id="nav-prompts" onclick="showSection('prompts')">
+      <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+      Prompts
+    </button>
+    <button class="nav-btn" id="nav-config" onclick="showSection('config')">
+      <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      Configurações
+    </button>
+  </nav>
+
+  <!-- Footer -->
+  <div style="padding:14px 16px; border-top:1px solid var(--border);">
+    <div style="font-size:11px; color:var(--muted);">Amanda AI v3.0</div>
+    <div id="updated-at" style="font-size:11px; color:var(--muted); margin-top:2px;"></div>
+  </div>
+</aside>
+
+<!-- ════════════ MAIN ════════════ -->
+<main style="flex:1; display:flex; flex-direction:column; height:100vh; overflow:hidden; min-width:0;">
+
+  <!-- Header -->
+  <header style="background:var(--surface); border-bottom:1px solid var(--border); padding:16px 24px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
+    <div>
+      <h1 id="page-title" style="font-size:17px; font-weight:700; margin:0;">Início</h1>
+      <p id="page-sub" style="font-size:12px; color:var(--muted); margin:2px 0 0;">Visão geral do sistema</p>
+    </div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <div style="display:flex; align-items:center; gap:6px; background:rgba(34,197,94,.1); color:var(--green); padding:6px 12px; border-radius:999px; font-size:12px; font-weight:600;">
+        <span style="width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s infinite;display:inline-block;"></span>
+        Online
+      </div>
+      <button class="btn-outline" onclick="refreshAll()" title="Atualizar dados">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="display:inline;vertical-align:middle;margin-right:4px;"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        Atualizar
+      </button>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div style="flex:1; overflow-y:auto; padding:24px;">
+
+    <!-- ═══ INÍCIO ═══ -->
+    <section id="section-inicio" class="active">
+
+      <!-- Stats -->
+      <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px;">
+        <div class="stat-card">
+          <div style="font-size:11px; font-weight:700; color:var(--muted); letter-spacing:.06em; text-transform:uppercase; margin-bottom:8px;">Conversas Ativas</div>
+          <div id="stat-conv" style="font-size:32px; font-weight:800; color:var(--accent);">—</div>
+        </div>
+        <div class="stat-card">
+          <div style="font-size:11px; font-weight:700; color:var(--muted); letter-spacing:.06em; text-transform:uppercase; margin-bottom:8px;">Mensagens Hoje</div>
+          <div id="stat-msg" style="font-size:32px; font-weight:800; color:var(--primary);">—</div>
+        </div>
+        <div class="stat-card">
+          <div style="font-size:11px; font-weight:700; color:var(--muted); letter-spacing:.06em; text-transform:uppercase; margin-bottom:8px;">Em Handoff</div>
+          <div id="stat-hand" style="font-size:32px; font-weight:800; color:var(--red);">—</div>
+        </div>
+        <div class="stat-card">
+          <div style="font-size:11px; font-weight:700; color:var(--muted); letter-spacing:.06em; text-transform:uppercase; margin-bottom:8px;">Tokens Hoje</div>
+          <div id="stat-tok" style="font-size:32px; font-weight:800; color:#f59e0b;">—</div>
+        </div>
+      </div>
+
+      <!-- Chart -->
+      <div class="card" style="padding:20px;">
+        <div style="font-size:14px; font-weight:600; margin-bottom:16px;">Mensagens — últimos 7 dias</div>
+        <canvas id="chart-msgs" height="90"></canvas>
+      </div>
+
+    </section>
+
+    <!-- ═══ CONVERSAS ═══ -->
+    <section id="section-conversas">
+      <div style="display:flex; gap:10px; margin-bottom:16px; align-items:center;">
+        <input type="text" id="conv-search" placeholder="Buscar por nome ou telefone…" style="flex:1;" oninput="filterConvs()">
+        <button class="btn-primary" onclick="loadConversations()">Atualizar</button>
+      </div>
+      <div class="card" style="overflow:hidden;">
+        <table>
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Última Mensagem</th>
+              <th>Status</th>
+              <th>Amanda</th>
+              <th>Última Atividade</th>
+            </tr>
+          </thead>
+          <tbody id="conv-tbody">
+            <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:40px;">Carregando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ═══ QR CODE ═══ -->
+    <section id="section-qrcode">
+      <div style="max-width:420px; margin:0 auto;">
+        <div class="card" style="padding:32px; text-align:center;">
+          <h2 style="font-size:17px; font-weight:700; margin:0 0 8px;">Conectar WhatsApp</h2>
+          <p style="font-size:13px; color:var(--muted); margin:0 0 24px;">Escaneie o QR Code com o WhatsApp para vincular o número à Amanda</p>
+          <div id="qr-box" style="width:256px; height:256px; margin:0 auto 24px; background:white; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden;">
+            <span style="color:#666; font-size:13px;">Carregando…</span>
+          </div>
+          <button class="btn-primary" style="width:100%; padding:12px;" onclick="loadQRCode()">Atualizar QR Code</button>
+          <p style="font-size:11px; color:var(--muted); margin:12px 0 0;">O QR Code expira em 60 segundos. Clique em Atualizar se necessário.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ PROMPTS ═══ -->
+    <section id="section-prompts">
+      <div style="display:flex; gap:16px; min-height:600px;">
+
+        <!-- File list -->
+        <div class="card" style="width:160px; flex-shrink:0; padding:10px; height:fit-content; display:flex; flex-direction:column; gap:2px;">
+          <div style="font-size:10px; font-weight:700; color:var(--muted); letter-spacing:.08em; padding:6px 8px;">ARQUIVOS</div>
+          <button class="nav-btn active" id="ptab-personality"   onclick="selectPrompt('personality')">Personalidade</button>
+          <button class="nav-btn"        id="ptab-identity"      onclick="selectPrompt('identity')">Identidade</button>
+          <button class="nav-btn"        id="ptab-store-info"    onclick="selectPrompt('store-info')">Loja</button>
+          <button class="nav-btn"        id="ptab-emotional"     onclick="selectPrompt('emotional')">Emocional</button>
+          <button class="nav-btn"        id="ptab-restrictions"  onclick="selectPrompt('restrictions')">Restrições</button>
+          <button class="nav-btn"        id="ptab-humanization"  onclick="selectPrompt('humanization')">Humanização</button>
+          <button class="nav-btn"        id="ptab-memory"        onclick="selectPrompt('memory')">Memória</button>
+          <button class="nav-btn"        id="ptab-sales"         onclick="selectPrompt('sales')">Vendas</button>
+          <button class="nav-btn"        id="ptab-followup"      onclick="selectPrompt('followup')">Follow-up</button>
+          <button class="nav-btn"        id="ptab-anti-spam"     onclick="selectPrompt('anti-spam')">Anti-Spam</button>
+        </div>
+
+        <!-- Editor -->
+        <div class="card" style="flex:1; padding:20px; display:flex; flex-direction:column; gap:12px;">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span id="prompt-label" style="font-size:15px; font-weight:700;">Personalidade</span>
+              <span id="prompt-chars" style="background:rgba(0,212,255,.1); color:var(--accent); padding:2px 10px; border-radius:999px; font-size:11px; font-weight:600;">0 chars</span>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <span id="prompt-saved" style="font-size:12px; color:var(--green); display:none;">✓ Salvo!</span>
+              <button class="btn-primary" onclick="savePrompt()">Salvar</button>
+            </div>
+          </div>
+          <textarea id="prompt-editor" style="min-height:520px; flex:1;" oninput="onPromptEdit()"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ CONFIGURAÇÕES ═══ -->
+    <section id="section-config">
+      <div style="max-width:520px; display:flex; flex-direction:column; gap:20px;">
+
+        <!-- Logo upload -->
+        <div class="card" style="padding:24px;">
+          <h2 style="font-size:15px; font-weight:700; margin:0 0 6px;">Logo da Empresa</h2>
+          <p style="font-size:12px; color:var(--muted); margin:0 0 20px;">PNG ou JPEG · Máximo 2MB · Aparece no topo do menu lateral</p>
+
+          <div class="drop-zone" id="drop-zone"
+            onclick="document.getElementById('logo-input').click()"
+            ondragover="event.preventDefault(); this.classList.add('dragover')"
+            ondragleave="this.classList.remove('dragover')"
+            ondrop="handleDrop(event)">
+            <div id="logo-preview-wrap" style="display:none; margin-bottom:16px;">
+              <img id="logo-preview" style="max-height:80px; max-width:100%; object-fit:contain; border-radius:8px; margin:0 auto; display:block;">
+            </div>
+            <svg width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="color:var(--muted); margin:0 auto 10px; display:block;"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            <p style="font-size:14px; font-weight:500; margin:0 0 4px;">Clique ou arraste a imagem aqui</p>
+            <p style="font-size:12px; color:var(--muted); margin:0;">PNG, JPEG</p>
+          </div>
+          <input id="logo-input" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" style="display:none;" onchange="uploadLogo(this.files[0])">
+          <div id="logo-status" style="text-align:center; font-size:12px; margin-top:12px; display:none;"></div>
+        </div>
+
+        <!-- Handoff info -->
+        <div class="card" style="padding:24px;">
+          <h2 style="font-size:15px; font-weight:700; margin:0 0 16px;">Controle de Handoff</h2>
+          <div style="display:flex; flex-direction:column; gap:12px; font-size:13px;">
+            <div style="display:flex; align-items:flex-start; gap:12px; padding:12px; background:rgba(239,68,68,.06); border-radius:8px; border:1px solid rgba(239,68,68,.15);">
+              <span style="font-family:monospace; font-weight:800; color:var(--red); font-size:15px; flex-shrink:0;">Oii</span>
+              <span style="color:var(--muted);">Staff digita no WhatsApp da cliente → Amanda <strong style="color:var(--text);">PAUSA</strong> nessa conversa</span>
+            </div>
+            <div style="display:flex; align-items:flex-start; gap:12px; padding:12px; background:rgba(34,197,94,.06); border-radius:8px; border:1px solid rgba(34,197,94,.15);">
+              <span style="font-family:monospace; font-weight:800; color:var(--green); font-size:15px; flex-shrink:0;">Até mais</span>
+              <span style="color:var(--muted);">Staff digita no WhatsApp da cliente → Amanda <strong style="color:var(--text);">VOLTA</strong> nessa conversa</span>
+            </div>
+            <div style="padding:12px; background:rgba(255,255,255,.03); border-radius:8px; border:1px solid var(--border); font-size:12px; color:var(--muted);">
+              ⏱️ Timeout automático: <strong style="color:var(--text);">2 horas</strong> sem mensagem do staff → Amanda retorna automaticamente
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </div><!-- /content -->
+</main><!-- /main -->
+
+<style>
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+</style>
+
+<script>
+// ── State ──
+let convData = [];
+let promptsData = {};
+let curPrompt = 'personality';
+let chartInst = null;
+
+const PROMPT_LABELS = {
+  personality:'Personalidade', identity:'Identidade', 'store-info':'Loja',
+  emotional:'Emocional', restrictions:'Restrições', humanization:'Humanização',
+  memory:'Memória', sales:'Vendas', followup:'Follow-up', 'anti-spam':'Anti-Spam'
+};
+
+// ── Navigation ──
+function showSection(name) {
+  document.querySelectorAll('section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn[id^="nav-"]').forEach(b => b.classList.remove('active'));
+  document.getElementById('section-' + name).classList.add('active');
+  document.getElementById('nav-' + name).classList.add('active');
+
+  const titles = {
+    inicio:    ['Início',          'Visão geral do sistema'],
+    conversas: ['Conversas',       'Clientes em atendimento'],
+    qrcode:    ['WhatsApp QR',     'Conectar número ao WhatsApp'],
+    prompts:   ['Prompts',         'Editar personalidade da Amanda'],
+    config:    ['Configurações',   'Logo e opções gerais'],
+  };
+  document.getElementById('page-title').textContent = titles[name][0];
+  document.getElementById('page-sub').textContent   = titles[name][1];
+
+  if (name === 'conversas') loadConversations();
+  if (name === 'qrcode')    loadQRCode();
+  if (name === 'prompts')   loadPrompts();
+}
+
+// ── Amanda toggle ──
+async function toggleAmanda(checked) {
+  try {
+    const r = await fetch('/dashboard/api/toggle', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ enabled: checked })
+    });
+    const d = await r.json();
+    updateToggleUI(d.amandaEnabled);
+    toast(d.amandaEnabled ? '✅ Amanda LIGADA' : '⛔ Amanda DESLIGADA', d.amandaEnabled ? 'green' : 'red');
+  } catch { toast('Erro ao alterar status', 'red'); }
+}
+
+function updateToggleUI(enabled) {
+  const cb = document.getElementById('global-toggle');
+  const txt = document.getElementById('global-status-text');
+  cb.checked = enabled;
+  txt.textContent = enabled ? '● LIGADA' : '● DESLIGADA';
+  txt.style.color = enabled ? 'var(--green)' : 'var(--red)';
+}
+
+// ── Load status ──
+async function loadStatus() {
+  try {
+    const d = await fetch('/dashboard/api/status').then(r => r.json());
+    document.getElementById('stat-conv').textContent  = d.activeConversations;
+    document.getElementById('stat-msg').textContent   = d.messagesToday;
+    document.getElementById('stat-hand').textContent  = d.handoffsActive;
+    document.getElementById('stat-tok').textContent   = (d.tokensToday||0).toLocaleString('pt-BR');
+    document.getElementById('badge-convs').textContent = d.activeConversations;
+    updateToggleUI(d.amandaEnabled);
+    document.getElementById('updated-at').textContent = 'Atualizado: ' + new Date().toLocaleTimeString('pt-BR');
+  } catch {}
+}
+
+// ── Chart ──
+async function loadChart() {
+  try {
+    const data = await fetch('/dashboard/api/stats').then(r => r.json());
+    const labels = data.map(d => { const p = d.dia.split('-'); return p[2]+'/'+p[1]; });
+    const vals   = data.map(d => d.total);
+    if (chartInst) chartInst.destroy();
+    chartInst = new Chart(document.getElementById('chart-msgs'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Mensagens',
+          data: vals,
+          backgroundColor: 'rgba(37,99,235,.55)',
+          borderColor: '#2563EB',
+          borderWidth: 1,
+          borderRadius: 6,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,.05)' }, ticks: { color: '#8B92A5' } },
+          x: { grid: { display: false }, ticks: { color: '#8B92A5' } }
+        }
+      }
+    });
+  } catch {}
+}
+
+// ── Conversas ──
+async function loadConversations() {
+  try {
+    convData = await fetch('/dashboard/api/conversations').then(r => r.json());
+    renderConvs(convData);
+  } catch {
+    document.getElementById('conv-tbody').innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--red);padding:40px;">Erro ao carregar conversas</td></tr>';
+  }
+}
+
+function renderConvs(list) {
+  const tb = document.getElementById('conv-tbody');
+  if (!list.length) {
+    tb.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:40px;">Nenhuma conversa ativa</td></tr>';
+    return;
+  }
+  tb.innerHTML = list.map(c => {
+    const badge = c.handoff_active
+      ? '<span class="badge badge-handoff">Em handoff</span>'
+      : '<span class="badge badge-on">Ativa</span>';
+    const time = c.last_message_at
+      ? new Date(c.last_message_at).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+      : '—';
+    const msg = (c.ultima_mensagem||'').slice(0,55) + ((c.ultima_mensagem||'').length > 55 ? '…':'');
+    const btnLabel = c.handoff_active ? '🟢 Ligar Amanda' : '🔴 Pausar Amanda';
+    return `<tr>
+      <td>
+        <div style="font-weight:600;">${c.display_name||'—'}</div>
+        <div style="font-size:11px;color:var(--muted);">${c.phone}</div>
+      </td>
+      <td style="color:var(--muted); max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${(c.ultima_mensagem||'').replace(/"/g,'&quot;')}">${msg||'—'}</td>
+      <td>${badge}</td>
+      <td>
+        <button class="btn-outline" onclick="toggleHandoff('${c.id}',this)" style="font-size:12px;padding:6px 12px;">${btnLabel}</button>
+      </td>
+      <td style="color:var(--muted); font-size:12px;">${time}</td>
+    </tr>`;
+  }).join('');
+}
+
+function filterConvs() {
+  const q = document.getElementById('conv-search').value.toLowerCase();
+  renderConvs(convData.filter(c => (c.display_name||'').toLowerCase().includes(q) || (c.phone||'').includes(q)));
+}
+
+async function toggleHandoff(id, btn) {
+  try {
+    const d = await fetch(`/dashboard/api/conversations/${id}/handoff`, { method:'POST' }).then(r => r.json());
+    btn.textContent = d.handoff_active ? '🟢 Ligar Amanda' : '🔴 Pausar Amanda';
+    loadConversations();
+  } catch { toast('Erro ao alterar handoff', 'red'); }
+}
+
+// ── QR Code ──
+async function loadQRCode() {
+  const box = document.getElementById('qr-box');
+  box.innerHTML = '<span style="color:#666;font-size:13px;">Carregando…</span>';
+  try {
+    const d = await fetch('/dashboard/api/qrcode').then(r => r.json());
+    if (d.qrcode) {
+      box.innerHTML = `<img src="${d.qrcode}" style="width:100%;height:100%;object-fit:contain;" alt="QR Code">`;
+    } else {
+      box.innerHTML = '<div style="text-align:center;"><div style="color:var(--green);font-size:28px;margin-bottom:8px;">✓</div><div style="font-size:13px;font-weight:600;">WhatsApp Conectado!</div><div style="font-size:12px;color:var(--muted);margin-top:4px;">Sem QR Code necessário</div></div>';
+    }
+  } catch {
+    box.innerHTML = '<span style="color:var(--red);font-size:13px;">Erro ao carregar QR Code</span>';
+  }
+}
+
+// ── Prompts ──
+async function loadPrompts() {
+  try {
+    promptsData = await fetch('/dashboard/api/prompts').then(r => r.json());
+    selectPrompt(curPrompt);
+  } catch {}
+}
+
+function selectPrompt(name) {
+  curPrompt = name;
+  document.querySelectorAll('[id^="ptab-"]').forEach(b => b.classList.remove('active'));
+  const tab = document.getElementById('ptab-' + name);
+  if (tab) tab.classList.add('active');
+  const content = promptsData[name] || '';
+  document.getElementById('prompt-editor').value = content;
+  document.getElementById('prompt-label').textContent = PROMPT_LABELS[name] || name;
+  document.getElementById('prompt-chars').textContent = content.length + ' chars';
+  document.getElementById('prompt-saved').style.display = 'none';
+}
+
+function onPromptEdit() {
+  const len = document.getElementById('prompt-editor').value.length;
+  document.getElementById('prompt-chars').textContent = len + ' chars';
+}
+
+async function savePrompt() {
+  const content = document.getElementById('prompt-editor').value;
+  try {
+    const r = await fetch(`/dashboard/api/prompts/${curPrompt}`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ content })
+    });
+    if (r.ok) {
+      promptsData[curPrompt] = content;
+      const s = document.getElementById('prompt-saved');
+      s.style.display = 'inline';
+      setTimeout(() => s.style.display='none', 3000);
+      toast('✓ Prompt salvo e aplicado imediatamente!', 'green');
+    } else {
+      toast('Erro ao salvar prompt', 'red');
+    }
+  } catch { toast('Erro ao salvar prompt', 'red'); }
+}
+
+// ── Logo ──
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if (f) uploadLogo(f);
+}
+
+async function uploadLogo(file) {
+  if (!file) return;
+  const st = document.getElementById('logo-status');
+  st.textContent = 'Enviando…';
+  st.style.color = 'var(--accent)';
+  st.style.display = 'block';
+  const fd = new FormData();
+  fd.append('logo', file);
+  try {
+    const d = await fetch('/dashboard/api/logo', { method:'POST', body:fd }).then(r => r.json());
+    if (d.url) {
+      st.textContent = '✓ Logo atualizada!';
+      st.style.color = 'var(--green)';
+      const prev = document.getElementById('logo-preview');
+      const wrap = document.getElementById('logo-preview-wrap');
+      prev.src = URL.createObjectURL(file);
+      wrap.style.display = 'block';
+      loadLogo();
+      toast('✓ Logo atualizada com sucesso!', 'green');
+    } else {
+      st.textContent = '✗ ' + (d.error || 'Erro no upload');
+      st.style.color = 'var(--red)';
+    }
+  } catch {
+    st.textContent = '✗ Erro ao enviar logo';
+    st.style.color = 'var(--red)';
+  }
+}
+
+function loadLogo() {
+  const img  = document.getElementById('logo-img');
+  const text = document.getElementById('logo-text');
+  const tryLoad = (src, fallback) => {
+    img.onload  = () => { img.style.display='block'; text.style.display='none'; };
+    img.onerror = fallback;
+    img.src = src;
+  };
+  tryLoad('/dashboard/api/logo?' + Date.now(), () => {
+    img.style.display = 'none';
+    text.style.display = 'block';
+  });
+}
+
+// ── Toast ──
+function toast(msg, color='green') {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.style.background = color === 'green' ? '#16a34a' : '#dc2626';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),300); }, 3000);
+}
+
+// ── Refresh ──
+function refreshAll() {
+  loadStatus();
+  const active = document.querySelector('section.active');
+  if (active?.id === 'section-inicio') loadChart();
+  if (active?.id === 'section-conversas') loadConversations();
+}
+
+// ── Init ──
+(async function init() {
+  await loadStatus();
+  await loadChart();
+  loadLogo();
+  setInterval(loadStatus, 30000);
+})();
+</script>
+</body>
+</html>

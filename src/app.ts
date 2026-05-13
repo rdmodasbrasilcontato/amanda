@@ -2,10 +2,12 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import compression from 'compression';
+import path from 'path';
 import { generalRateLimit } from './security/rate-limiter';
 import webhookRoutes from './routes/webhook.routes';
 import adminRoutes from './routes/admin.routes';
 import healthRoutes from './routes/health.routes';
+import dashboardRoutes from './routes/dashboard.routes';
 import { logger } from './utils/logger';
 import { config } from './config';
 
@@ -41,6 +43,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // ── Rate Limit Geral ──
 app.use(generalRateLimit);
 
+// ── Static: uploads (logo) ──
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
 // ── Request logging ──
 app.use((req, _res, next) => {
   logger.debug({ method: req.method, path: req.path, ip: req.ip }, 'Request recebida');
@@ -51,6 +56,7 @@ app.use((req, _res, next) => {
 app.use('/health', healthRoutes);
 app.use('/webhook', webhookRoutes);
 app.use('/admin', adminRoutes);
+app.use('/dashboard', dashboardRoutes);
 
 // ── 404 ──
 app.use((_req, res) => {

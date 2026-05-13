@@ -50,4 +50,14 @@ if (fs.existsSync(srcPrompts)) {
   console.warn('⚠️  src/prompts/ não encontrado — prompts não copiados para dist/');
 }
 
+const srcDashboard = path.join(__dirname, 'src', 'dashboard');
+const distDashboard = path.join(__dirname, 'dist', 'dashboard');
+
+if (fs.existsSync(srcDashboard)) {
+  copyDirSync(srcDashboard, distDashboard);
+  console.log('✅ src/dashboard/ copiado para dist/dashboard/');
+} else {
+  console.warn('⚠️  src/dashboard/ não encontrado — dashboard não copiado para dist/');
+}
+
 process.exit(0);

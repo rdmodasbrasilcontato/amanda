@@ -14,6 +14,7 @@ import { detectOptOut } from '../anti-spam/spam.service';
 import { logger } from '../../utils/logger';
 import { config } from '../../config';
 import { extractFirstName, normalizePhone } from '../../utils/helpers';
+import { isAmandaEnabled } from '../../state/global.state';
 
 export async function processIncomingMessage(payload: ZApiWebhookPayload): Promise<void> {
   if (payload.isGroupMsg) return;
@@ -37,6 +38,12 @@ export async function processIncomingMessage(payload: ZApiWebhookPayload): Promi
     const fromApi = (payload as any).fromApi === true;
     if (fromApi) return; // mensagem enviada pela própria Amanda via Z-API
     await handleStaffMessage(phone, name, payload);
+    return;
+  }
+
+  // Verifica chave global (toggle do dashboard)
+  if (!isAmandaEnabled()) {
+    logger.debug({ phone }, 'Amanda desligada globalmente — mensagem ignorada');
     return;
   }
 
