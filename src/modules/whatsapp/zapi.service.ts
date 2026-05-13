@@ -5,7 +5,7 @@ import { logger } from '../../utils/logger';
 import { sleep, generateTypingDelay, retryWithBackoff } from '../../utils/helpers';
 
 const zapiClient: AxiosInstance = axios.create({
-  baseURL: config.ZAPI_BASE_URL,
+  baseURL: `${config.ZAPI_BASE_URL}/instances/${config.ZAPI_INSTANCE_ID}/token/${config.ZAPI_TOKEN}`,
   headers: {
     'Client-Token': config.ZAPI_CLIENT_TOKEN,
     'Content-Type': 'application/json',
