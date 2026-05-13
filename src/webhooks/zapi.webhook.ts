@@ -21,8 +21,15 @@ export async function handleZApiWebhook(req: Request, res: Response): Promise<vo
     return;
   }
 
-  // Ignorar grupos
-  if (payload.isGroupMsg) {
+  // Ignorar grupos — Z-API nem sempre seta isGroupMsg, então também detectamos
+  // pelo formato do phone: IDs de grupo têm "-group" ou são longos demais (>15 dígitos)
+  const phoneRaw = String(payload.phone);
+  const isGroup =
+    payload.isGroupMsg === true ||
+    phoneRaw.includes('-group') ||
+    phoneRaw.includes('@g.us') ||
+    phoneRaw.replace(/\D/g, '').length > 15;
+  if (isGroup) {
     logger.debug({ phone: payload.phone }, 'Ignorando mensagem de grupo');
     return;
   }

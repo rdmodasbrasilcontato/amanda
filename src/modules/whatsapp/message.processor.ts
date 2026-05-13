@@ -18,6 +18,15 @@ import { extractFirstName, normalizePhone } from '../../utils/helpers';
 export async function processIncomingMessage(payload: ZApiWebhookPayload): Promise<void> {
   if (payload.fromMe || payload.isGroupMsg) return;
 
+  const phoneRaw = String(payload.phone);
+  if (
+    phoneRaw.includes('-group') ||
+    phoneRaw.includes('@g.us') ||
+    phoneRaw.replace(/\D/g, '').length > 15
+  ) {
+    return;
+  }
+
   const phone = normalizePhone(payload.phone);
   const name = payload.senderName || undefined;
 
