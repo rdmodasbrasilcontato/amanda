@@ -36,10 +36,27 @@ export async function sendTextMessage(phone: string, text: string): Promise<stri
       3,
       2000
     );
-    logger.info({ phone }, 'Mensagem texto enviada via Z-API');
+    logger.info(
+      {
+        phone,
+        zaapId: response.data?.zaapId,
+        messageId: response.data?.messageId,
+        responseData: response.data,
+        status: response.status,
+      },
+      'Mensagem texto enviada via Z-API'
+    );
     return response.data?.zaapId ?? null;
-  } catch (err) {
-    logger.error({ err, phone }, 'Erro ao enviar texto via Z-API');
+  } catch (err: any) {
+    logger.error(
+      {
+        phone,
+        status: err.response?.status,
+        responseData: err.response?.data,
+        message: err.message,
+      },
+      'Erro ao enviar texto via Z-API'
+    );
     return null;
   }
 }
