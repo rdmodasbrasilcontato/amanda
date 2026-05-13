@@ -17,7 +17,9 @@ export function pickRandom<T>(arr: T[]): T {
 }
 
 export function normalizePhone(phone: string): string {
-  return phone.replace(/\D/g, '');
+  const beforeDash = phone.split('-')[0] ?? phone;
+  const digits = beforeDash.replace(/\D/g, '');
+  return digits.slice(0, 13);
 }
 
 export function formatPhoneDisplay(phone: string): string {
