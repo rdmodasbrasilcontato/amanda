@@ -49,19 +49,22 @@ export async function enqueueMessage(payload: ZApiWebhookPayload): Promise<void>
 }
 
 function combineMessages(messages: ZApiWebhookPayload[]): ZApiWebhookPayload {
+  // Z-API manda tudo como ReceivedCallback; detectamos mídia pelos campos do payload
+  const mediaMsg = messages.find((m) => {
+    const p = m as any;
+    return p.audio?.audioUrl || p.image?.imageUrl || p.document?.documentUrl;
+  });
+  if (mediaMsg) return mediaMsg;
+
   const texts = messages
-    .filter(m => m.type === 'text' || m.type === 'ReceivedCallback')
-    .map(m => m.text?.message ?? '')
+    .map((m) => {
+      const p = m as any;
+      return p.text?.message ?? p.body ?? p.message ?? '';
+    })
     .filter(Boolean)
     .join(' ');
 
   const base = messages[messages.length - 1]!;
-
-  // Se há mídia, usar último payload com mídia como base
-  const mediaMsg = messages.find(m => m.type === 'audio' || m.type === 'image' || m.type === 'document');
-
-  if (mediaMsg) return mediaMsg;
-
   return {
     ...base,
     text: { message: texts },
