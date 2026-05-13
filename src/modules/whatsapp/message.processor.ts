@@ -53,52 +53,55 @@ export async function processIncomingMessage(payload: ZApiWebhookPayload): Promi
   );
   if (handoffBlocked) return;
 
-  // 4. Processar conteúdo da mensagem baseado no tipo
+  // 4. Processar conteúdo da mensagem baseado no payload
+  // Z-API envia TUDO como type="ReceivedCallback"; o tipo real é descoberto
+  // pelos campos preenchidos no payload (audio, image, document, text).
   let userContent = '';
   let mediaUrl: string | undefined;
+  let messageKind: 'text' | 'audio' | 'image' | 'document' = 'text';
 
-  switch (payload.type) {
-    case 'ReceivedCallback':
-    case 'text':
-      userContent = payload.text?.message ?? '';
-      break;
+  const anyPayload = payload as any;
 
-    case 'audio':
-      if (payload.audio?.audioUrl) {
-        userContent = await processAudioMessage(payload.audio.audioUrl, client.id, payload.messageId);
-        mediaUrl = payload.audio.audioUrl;
-      }
-      break;
-
-    case 'image':
-      if (payload.image?.imageUrl) {
-        userContent = await processImageMessage(
-          payload.image.imageUrl,
-          payload.image.caption ?? '',
-          client.id,
-          payload.messageId
-        );
-        mediaUrl = payload.image.imageUrl;
-      }
-      break;
-
-    case 'document':
-      if (payload.document?.documentUrl) {
-        userContent = await processDocumentMessage(
-          payload.document.documentUrl,
-          payload.document.fileName ?? 'documento',
-          client.id,
-          payload.messageId
-        );
-        mediaUrl = payload.document.documentUrl;
-      }
-      break;
-
-    default:
-      userContent = '[mensagem recebida]';
+  if (anyPayload.audio?.audioUrl) {
+    messageKind = 'audio';
+    mediaUrl = anyPayload.audio.audioUrl;
+    userContent = await processAudioMessage(anyPayload.audio.audioUrl, client.id, payload.messageId);
+  } else if (anyPayload.image?.imageUrl) {
+    messageKind = 'image';
+    mediaUrl = anyPayload.image.imageUrl;
+    userContent = await processImageMessage(
+      anyPayload.image.imageUrl,
+      anyPayload.image.caption ?? '',
+      client.id,
+      payload.messageId
+    );
+  } else if (anyPayload.document?.documentUrl) {
+    messageKind = 'document';
+    mediaUrl = anyPayload.document.documentUrl;
+    userContent = await processDocumentMessage(
+      anyPayload.document.documentUrl,
+      anyPayload.document.fileName ?? 'documento',
+      client.id,
+      payload.messageId
+    );
+  } else if (anyPayload.text?.message) {
+    messageKind = 'text';
+    userContent = anyPayload.text.message;
+  } else if (typeof anyPayload.body === 'string') {
+    messageKind = 'text';
+    userContent = anyPayload.body;
+  } else if (typeof anyPayload.message === 'string') {
+    messageKind = 'text';
+    userContent = anyPayload.message;
   }
 
-  if (!userContent.trim()) return;
+  if (!userContent.trim()) {
+    logger.warn(
+      { phone, type: payload.type, messageId: payload.messageId, payloadKeys: Object.keys(anyPayload) },
+      'Mensagem sem conteúdo extraível — payload desconhecido'
+    );
+    return;
+  }
 
   // 5. Verificar opt-out explícito na mensagem
   if (detectOptOut(userContent)) {
@@ -121,7 +124,7 @@ export async function processIncomingMessage(payload: ZApiWebhookPayload): Promi
     clientId: client.id,
     role: 'user',
     content: userContent,
-    messageType: payload.type === 'audio' ? 'audio' : payload.type === 'image' ? 'image' : 'text',
+    messageType: messageKind,
     mediaUrl,
     zapiMessageId: payload.messageId,
     emotionDetected: emotion,
@@ -171,7 +174,7 @@ export async function processIncomingMessage(payload: ZApiWebhookPayload): Promi
   // 15. Enviar resposta (texto ou áudio)
   const shouldSendAudio =
     Math.random() < config.AMANDA_AUDIO_REPLY_PROBABILITY &&
-    payload.type === 'audio';
+    messageKind === 'audio';
 
   if (shouldSendAudio) {
     const audioBuffer = await generateAudioResponse(aiResponse.content);
