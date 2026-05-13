@@ -26,4 +26,28 @@ if (result.status !== 0) {
   );
 }
 
+// Copy src/prompts/ → dist/prompts/ (tsc ignores non-ts files)
+function copyDirSync(src, dest) {
+  if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+const srcPrompts = path.join(__dirname, 'src', 'prompts');
+const distPrompts = path.join(__dirname, 'dist', 'prompts');
+
+if (fs.existsSync(srcPrompts)) {
+  copyDirSync(srcPrompts, distPrompts);
+  console.log('✅ src/prompts/ copiado para dist/prompts/');
+} else {
+  console.warn('⚠️  src/prompts/ não encontrado — prompts não copiados para dist/');
+}
+
 process.exit(0);

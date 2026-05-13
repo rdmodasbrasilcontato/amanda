@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
 interface Prompts {
@@ -16,10 +16,23 @@ interface Prompts {
 
 let cachedPrompts: Prompts | null = null;
 
+function resolvePromptsDir(): string {
+  // When running from dist/, __dirname is dist/modules/ai — look for dist/prompts first
+  const distPrompts = join(__dirname, '../../prompts');
+  if (existsSync(distPrompts)) return distPrompts;
+
+  // Fallback: running in dev (ts-node) or dist/prompts wasn't copied — use src/prompts
+  const srcPrompts = join(process.cwd(), 'src', 'prompts');
+  if (existsSync(srcPrompts)) return srcPrompts;
+
+  // Last resort: relative to project root
+  return join(__dirname, '../../../src/prompts');
+}
+
 export function loadAllPrompts(): Prompts {
   if (cachedPrompts) return cachedPrompts;
 
-  const promptsDir = join(__dirname, '../../prompts');
+  const promptsDir = resolvePromptsDir();
 
   const load = (file: string): string => {
     try {
