@@ -1,11 +1,10 @@
 import cron from 'node-cron';
-import { processDueFollowups } from '../modules/followup/followup.service';
+import { processDueFollowups } from '../modules/followup/followup.processor';
 import { logger } from '../utils/logger';
 
 export function startFollowupJob(): void {
-  // Processar follow-ups a cada 5 minutos
-  cron.schedule('*/5 * * * *', async () => {
-    logger.debug('Executando job de follow-up');
+  // Run every 2 minutes
+  cron.schedule('*/2 * * * *', async () => {
     try {
       await processDueFollowups();
     } catch (err) {
@@ -13,5 +12,5 @@ export function startFollowupJob(): void {
     }
   });
 
-  logger.info('Job de follow-up iniciado (a cada 5 minutos)');
+  logger.info('✅ Job de follow-up iniciado (a cada 2 minutos)');
 }

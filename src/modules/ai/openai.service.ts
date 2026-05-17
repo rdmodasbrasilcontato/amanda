@@ -1,211 +1,155 @@
 import OpenAI from 'openai';
 import { config } from '../../config';
 import { logger } from '../../utils/logger';
-import { AIContext, AIResponse, EmotionType } from '../../types';
-import { loadAllPrompts } from './prompts.loader';
-import { retryWithBackoff } from '../../utils/helpers';
+import { FollowupContext, FollowupGeneratorResult } from '../../types';
 
-const client = new OpenAI({
+const openai = new OpenAI({
   apiKey: config.OPENAI_API_KEY,
   timeout: config.OPENAI_TIMEOUT_MS,
   maxRetries: 2,
 });
 
-export async function generateAmandaResponse(context: AIContext): Promise<AIResponse> {
-  const prompts = await loadAllPrompts();
-  const systemPrompt = buildSystemPrompt(prompts as unknown as Record<string, unknown>, context);
-
-  const messages: OpenAI.ChatCompletionMessageParam[] = [
-    { role: 'system', content: systemPrompt },
-  ];
-
-  // Adicionar memórias relevantes como contexto
-  if (context.relevantMemories.length > 0) {
-    const memorySummary = context.relevantMemories
-      .map((m, i) => `[Memória ${i + 1}]: ${m}`)
-      .join('\n');
-    messages.push({
-      role: 'system',
-      content: `MEMÓRIAS RELEVANTES DESTA CLIENTE:\n${memorySummary}`,
-    });
-  }
-
-  // Histórico de mensagens recentes (short-term memory)
-  for (const msg of context.shortTermMemory) {
-    messages.push({
-      role: msg.role as 'user' | 'assistant',
-      content: msg.content,
-    });
-  }
-
-  try {
-    const response = await retryWithBackoff(
-      () =>
-        client.chat.completions.create({
-          model: config.OPENAI_MODEL,
-          messages,
-          max_tokens: config.OPENAI_MAX_TOKENS,
-          temperature: config.OPENAI_TEMPERATURE,
-          presence_penalty: 0.6,
-          frequency_penalty: 0.4,
-        }),
-      2,
-      1000
-    );
-
-    const content = response.choices[0]?.message?.content ?? '';
-    const tokensUsed = response.usage?.total_tokens ?? 0;
-
-    const detectedEmotion = detectEmotionFromContext(context);
-    const shouldTriggerHandoff = checkHandoffTrigger(content, context);
-    const suggestedFollowup = checkFollowupSuggestion(context);
-
-    logger.info({ tokensUsed, model: config.OPENAI_MODEL }, 'Amanda response gerada');
-
-    return { content, tokensUsed, detectedEmotion, shouldTriggerHandoff, suggestedFollowup };
-  } catch (err) {
-    logger.warn({ err }, 'Falha no modelo principal, tentando fallback');
-    return generateFallbackResponse(messages, context);
-  }
-}
-
-async function generateFallbackResponse(
-  messages: OpenAI.ChatCompletionMessageParam[],
-  context: AIContext
-): Promise<AIResponse> {
-  const response = await client.chat.completions.create({
-    model: config.OPENAI_FALLBACK_MODEL,
-    messages,
-    max_tokens: config.OPENAI_MAX_TOKENS,
-    temperature: config.OPENAI_TEMPERATURE,
-  });
-
-  return {
-    content: response.choices[0]?.message?.content ?? 'Oi! Pode repetir?',
-    tokensUsed: response.usage?.total_tokens ?? 0,
-    detectedEmotion: 'neutral',
-    shouldTriggerHandoff: false,
-    suggestedFollowup: false,
-  };
-}
+// ─── Embedding ─────────────────────────────────────────────────────────────────
 
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const response = await client.embeddings.create({
+  const response = await openai.embeddings.create({
     model: config.OPENAI_EMBEDDING_MODEL,
     input: text.slice(0, 8000),
   });
   return response.data[0]?.embedding ?? [];
 }
 
+// ─── Audio Transcription ───────────────────────────────────────────────────────
+
 export async function transcribeAudio(audioBuffer: Buffer, mimeType: string): Promise<string> {
   const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'mp4' : 'mp3';
   const file = new File([audioBuffer], `audio.${ext}`, { type: mimeType });
-
-  const response = await client.audio.transcriptions.create({
+  const response = await openai.audio.transcriptions.create({
     file,
     model: config.OPENAI_WHISPER_MODEL,
     language: 'pt',
     response_format: 'text',
   });
-
-  return typeof response === 'string' ? response : (response as { text: string }).text;
+  return typeof response === 'string' ? response : (response as any).text;
 }
 
-export async function analyzeImage(
-  imageUrl: string,
-  prompt: string = 'Descreva esta peça de roupa detalhadamente: estilo, cor, tipo de peça, ocasião adequada.'
-): Promise<string> {
-  const response = await client.chat.completions.create({
+// ─── Image Analysis ────────────────────────────────────────────────────────────
+
+export async function analyzeClothingImage(imageUrl: string): Promise<string> {
+  const response = await openai.chat.completions.create({
     model: config.OPENAI_MODEL,
     messages: [
       {
         role: 'user',
         content: [
-          { type: 'text', text: prompt },
+          {
+            type: 'text',
+            text: 'Descreva esta peça de roupa detalhadamente: tipo de peça, cor, estilo, tecido (se visível), ocasião ideal, público-alvo. Seja específica e objetiva.',
+          },
           { type: 'image_url', image_url: { url: imageUrl, detail: 'low' } },
         ],
       },
     ],
-    max_tokens: 500,
+    max_tokens: 400,
   });
   return response.choices[0]?.message?.content ?? '';
 }
 
-export async function generateAudioResponse(text: string): Promise<Buffer> {
-  const response = await client.audio.speech.create({
-    model: config.OPENAI_TTS_MODEL,
-    voice: config.OPENAI_TTS_VOICE as 'nova',
-    input: text,
-    response_format: 'mp3',
-  });
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+// ─── Follow-up Generator ───────────────────────────────────────────────────────
+
+const SYSTEM_PROMPT_FOLLOWUP = `Você é Amanda, consultora de moda da RD Modas Brasil. Você está enviando uma mensagem de acompanhamento para uma cliente que demonstrou interesse anteriormente.
+
+REGRAS OBRIGATÓRIAS:
+- Escreva como uma pessoa real, não como bot
+- Seja calorosa, empática e natural
+- Use o nome da cliente se souber
+- Reference o interesse ou produto específico que ela demonstrou (se houver)
+- Máximo 2-3 parágrafos curtos, separados por linha em branco
+- Use no máximo 1 emoji por parágrafo
+- Não mencione "follow-up", "automação", "sistema"
+- Não seja genérica — personalize com base no contexto
+- Use linguagem informal e brasileira (pode usar "linda", "amor", etc com moderação)
+- Emojis permitidos: ❤️ 🥰 ✨ 💕 😍 💖 🌸 🤍 👗 🛍️
+- A mensagem deve parecer que Amanda escreveu pessoalmente pensando nessa cliente
+
+CONTEXTO DO LEAD:
+- Lead frio (0-20): mensagem suave e curiosa
+- Lead morno (21-50): mensagem com referência a interesse específico
+- Lead quente (51-80): mensagem com senso leve de novidade/oportunidade
+- Lead muito quente (81+): mensagem direta com produto/estilo que ela quer`;
+
+export async function generateFollowupMessage(
+  ctx: FollowupContext
+): Promise<FollowupGeneratorResult> {
+  const { client, profile, recentMessages, relevantMemories, attemptNumber, leadTemperature } = ctx;
+
+  const firstName = (client.preferred_name || client.name || '').split(' ')[0] || '';
+  const categories = profile?.categories_interest?.join(', ') || '';
+  const products = profile?.products_mentioned?.join(', ') || '';
+  const emotion = client.emotion_profile;
+  const intent = client.dominant_intent;
+
+  const contextParts = [
+    firstName ? `Nome: ${firstName}` : '',
+    `Temperatura do lead: ${leadTemperature}`,
+    `Emoção detectada: ${emotion}`,
+    `Intenção principal: ${intent}`,
+    categories ? `Categorias de interesse: ${categories}` : '',
+    products ? `Produtos mencionados: ${products}` : '',
+    recentMessages.length > 0
+      ? `Últimas mensagens:\n${recentMessages
+          .slice(-3)
+          .map(m => `${m.role === 'client' ? 'Cliente' : 'Amanda'}: ${m.content.slice(0, 100)}`)
+          .join('\n')}`
+      : '',
+    relevantMemories.length > 0
+      ? `Memórias relevantes:\n${relevantMemories.slice(0, 3).join('\n')}`
+      : '',
+    `Tentativa de follow-up: ${attemptNumber} de 8`,
+  ].filter(Boolean).join('\n');
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: config.OPENAI_MODEL,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT_FOLLOWUP },
+        { role: 'user', content: `CONTEXTO DA CLIENTE:\n${contextParts}\n\nEscreva a mensagem de follow-up:` },
+      ],
+      max_tokens: config.OPENAI_MAX_TOKENS,
+      temperature: config.OPENAI_TEMPERATURE,
+      presence_penalty: 0.6,
+      frequency_penalty: 0.4,
+    });
+
+    const content = response.choices[0]?.message?.content ?? '';
+    return { message: content, tokensUsed: response.usage?.total_tokens ?? 0 };
+  } catch (err) {
+    logger.warn({ err }, 'Modelo principal falhou — usando fallback');
+    return generateFallbackFollowup(firstName, leadTemperature, categories);
+  }
 }
 
-export async function detectEmotion(message: string): Promise<EmotionType> {
-  const response = await client.chat.completions.create({
+async function generateFallbackFollowup(
+  firstName: string,
+  temperature: string,
+  categories: string
+): Promise<FollowupGeneratorResult> {
+  const greeting = firstName ? `Oi ${firstName}!` : 'Oi!';
+  const catText = categories ? ` vi que você se interessou por ${categories}` : '';
+  const response = await openai.chat.completions.create({
     model: config.OPENAI_FALLBACK_MODEL,
     messages: [
+      { role: 'system', content: SYSTEM_PROMPT_FOLLOWUP },
       {
-        role: 'system',
-        content:
-          'Analise a emoção principal desta mensagem. Responda APENAS com uma palavra: neutral, happy, anxious, irritated, undecided, excited, sad',
+        role: 'user',
+        content: `${greeting} Escreva uma mensagem de follow-up${catText} para lead ${temperature}. Seja natural.`,
       },
-      { role: 'user', content: message },
     ],
-    max_tokens: 10,
-    temperature: 0,
+    max_tokens: 300,
+    temperature: 0.8,
   });
-
-  const raw = response.choices[0]?.message?.content?.trim().toLowerCase() ?? 'neutral';
-  const valid: EmotionType[] = ['neutral', 'happy', 'anxious', 'irritated', 'undecided', 'excited', 'sad'];
-  return valid.includes(raw as EmotionType) ? (raw as EmotionType) : 'neutral';
-}
-
-function buildSystemPrompt(
-  prompts: Record<string, unknown>,
-  context: AIContext
-): string {
-  const parts = [
-    prompts.identity,
-    prompts.personality,
-    prompts.emotional,
-    prompts.humanization,
-    prompts.restrictions,
-    prompts.storeInfo,
-    prompts.memory,
-    prompts.sales,
-    prompts.antiSpam,
-  ];
-
-  const clientSection = `
-CONTEXTO DA CLIENTE:
-- Nome: ${context.clientName || 'não identificada'}
-- Emoção detectada: ${context.detectedEmotion}
-- Status da conversa: ${context.conversationStatus}
-${context.longTermSummary ? `- Resumo do histórico: ${context.longTermSummary}` : ''}
-${context.productContext ? `- Produtos consultados: ${context.productContext}` : ''}
-
-FORMATO DE SAÍDA — OBRIGATÓRIO:
-Responda APENAS com a próxima mensagem da Amanda, picotada em 2 ou 3 balões.
-Separe cada balão por UMA LINHA EM BRANCO (\\n\\n). Sem rótulos, sem numeração, sem "Balão 1:".
-Cada balão: no máximo 2 frases curtas. No máximo 1 emoji por balão.
-Use apenas estes emojis: ❤️ 🥰 ✨ 💕 😍 💖 🌸 🤍 👗 🛍️.
-Nunca responda em um único parágrafo longo.
-`;
-
-  return [...parts, clientSection].join('\n\n---\n\n');
-}
-
-function detectEmotionFromContext(context: AIContext): EmotionType {
-  return context.detectedEmotion;
-}
-
-function checkHandoffTrigger(content: string, context: AIContext): boolean {
-  const handoffPhrases = ['transferir', 'humano', 'atendente', 'não consigo ajudar', 'fora do meu conhecimento'];
-  return handoffPhrases.some(phrase => content.toLowerCase().includes(phrase));
-}
-
-function checkFollowupSuggestion(context: AIContext): boolean {
-  return context.conversationStatus === 'active';
+  return {
+    message: response.choices[0]?.message?.content ?? `${greeting} Passando pra ver se posso te ajudar com alguma coisa! 💕`,
+    tokensUsed: response.usage?.total_tokens ?? 0,
+  };
 }

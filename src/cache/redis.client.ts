@@ -9,7 +9,6 @@ export function getRedisClient(): Redis | null {
   if (redisClient) return redisClient;
 
   redisClient = new Redis(config.REDIS_URL, {
-    tls: config.REDIS_TLS ? {} : undefined,
     retryStrategy: (times) => {
       if (times > 5) return null;
       return Math.min(times * 500, 3000);

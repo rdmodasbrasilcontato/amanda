@@ -1,336 +1,157 @@
-import { v4 as uuidv4 } from 'uuid';
-import { ZApiWebhookPayload, ProcessedMessage, AIContext, Mensagem, ConversationStatus } from '../../types';
-import { getOrCreateClient, updateClientLastContact, updateClientEmotion, saveInteractionAsMemory, markClientOptOut } from '../memory/long-term.service';
-import { pauseFollowupForClient, resumeFollowupForClient } from '../../state/followup.config';
-import { getShortTermMemory, addMessageToShortTerm } from '../memory/short-term.service';
-import { searchRelevantMemories } from '../memory/vector.service';
-import { generateAmandaResponse, detectEmotion } from '../ai/openai.service';
-import { sendTextWithTyping, sendBalloonsWithTyping, sendAudioMessage, markMessageAsRead } from './zapi.service';
-import { generateAudioResponse } from '../ai/openai.service';
-import { processAudioMessage, processImageMessage, processDocumentMessage } from './media.handler';
-import { query, queryOne } from '../../database/connection';
+import { ZApiWebhookPayload } from '../../types';
+import {
+  getOrCreateClient,
+  getOrCreateConversation,
+  saveMessage,
+  updateConversationLastMessage,
+  incrementInteractions,
+  saveInteractionMemory,
+  markClientOptOut,
+  pauseFollowupsForClient,
+  resumeFollowupsForClient,
+} from '../memory/long-term.service';
+import { analyzeBehavior } from '../behavioral/analyzer';
+import {
+  upsertBehaviorProfile,
+  updateClientEmotion,
+  updateClientIntent,
+  updatePreferredContactHour,
+} from '../behavioral/profile.service';
+import { recordMultipleScoreEvents, recordScoreEvent } from '../behavioral/lead-score.service';
+import { detectOptOut } from '../antispam/antispam.service';
 import { cancelPendingFollowups, scheduleFollowup } from '../followup/followup.service';
-import { checkAndHandleHandoff } from '../handoff/handoff.service';
-import { detectOptOut } from '../anti-spam/spam.service';
-import { logger } from '../../utils/logger';
+import { processAudioFromUrl } from '../media/audio.service';
+import { processImageFromUrl } from '../media/image.service';
+import { markMessageAsRead } from './zapi.service';
+import { normalizePhone } from '../../utils/helpers';
 import { config } from '../../config';
-import { extractFirstName, normalizePhone } from '../../utils/helpers';
-import { isAmandaEnabled } from '../../state/global.state';
+import { logger } from '../../utils/logger';
 
 export async function processIncomingMessage(payload: ZApiWebhookPayload): Promise<void> {
+  // Ignore group messages
   if (payload.isGroupMsg) return;
-
   const phoneRaw = String(payload.phone);
-  if (
-    phoneRaw.includes('-group') ||
-    phoneRaw.includes('@g.us') ||
-    phoneRaw.replace(/\D/g, '').length > 15
-  ) {
+  if (phoneRaw.includes('-group') || phoneRaw.includes('@g.us') || phoneRaw.replace(/\D/g, '').length > 15) return;
+
+  // Ignore our own API-sent messages
+  if (payload.fromMe) {
+    const fromApi = (payload as any).fromApi === true;
+    if (fromApi) return;
+    // Staff messages — just ignore (no handoff in silent mode)
     return;
   }
 
   const phone = normalizePhone(payload.phone);
   const name = payload.senderName || undefined;
 
-  // Mensagens do staff (fromMe + não enviadas pela própria API/Amanda):
-  // tratar apenas para toggle de handoff (palavra-chave Oii / Até mais)
-  // e refresh do timestamp se handoff já estiver ativo. Nunca responder.
-  if (payload.fromMe) {
-    const fromApi = (payload as any).fromApi === true;
-    if (fromApi) return; // mensagem enviada pela própria Amanda via Z-API
-    await handleStaffMessage(phone, name, payload);
-    return;
-  }
+  logger.info({ phone, type: payload.type }, '📥 Mensagem recebida');
 
-  // Verifica chave global (toggle do dashboard)
-  if (!isAmandaEnabled()) {
-    logger.debug({ phone }, 'Amanda desligada globalmente — mensagem ignorada');
-    return;
-  }
-
-  logger.info({ phone, type: payload.type }, 'Mensagem recebida');
-
-  // 1. Obter ou criar cliente
+  // 1. Get or create client
   const client = await getOrCreateClient(phone, name);
 
-  // Verificar opt-out
+  // 2. Opt-out check
   if (client.opt_out) {
-    logger.info({ phone }, 'Cliente com opt-out — ignorando mensagem');
+    logger.info({ phone }, 'Cliente com opt-out — ignorando');
     return;
   }
 
-  // 2. Obter ou criar conversa ativa
-  const conversation = await getOrCreateConversation(client.id);
-
-  // 3. Verificar handoff ativo
-  const handoffBlocked = await checkAndHandleHandoff(
-    conversation.id,
-    client.id,
-    phone,
-    payload
-  );
-  if (handoffBlocked) return;
-
-  // 4. Processar conteúdo da mensagem baseado no payload
-  // Z-API envia TUDO como type="ReceivedCallback"; o tipo real é descoberto
-  // pelos campos preenchidos no payload (audio, image, document, text).
-  let userContent = '';
-  let mediaUrl: string | undefined;
-  let messageKind: 'text' | 'audio' | 'image' | 'document' = 'text';
-
+  // 3. Extract content
   const anyPayload = payload as any;
+  let userContent = '';
+  let messageType: 'text' | 'audio' | 'image' | 'document' = 'text';
+  let mediaUrl: string | undefined;
 
   if (anyPayload.audio?.audioUrl) {
-    messageKind = 'audio';
+    messageType = 'audio';
     mediaUrl = anyPayload.audio.audioUrl;
-    userContent = await processAudioMessage(anyPayload.audio.audioUrl, client.id, payload.messageId);
+    userContent = await processAudioFromUrl(anyPayload.audio.audioUrl, anyPayload.audio.mimeType);
   } else if (anyPayload.image?.imageUrl) {
-    messageKind = 'image';
+    messageType = 'image';
     mediaUrl = anyPayload.image.imageUrl;
-    userContent = await processImageMessage(
-      anyPayload.image.imageUrl,
-      anyPayload.image.caption ?? '',
-      client.id,
-      payload.messageId
-    );
-  } else if (anyPayload.document?.documentUrl) {
-    messageKind = 'document';
-    mediaUrl = anyPayload.document.documentUrl;
-    userContent = await processDocumentMessage(
-      anyPayload.document.documentUrl,
-      anyPayload.document.fileName ?? 'documento',
-      client.id,
-      payload.messageId
-    );
+    userContent = await processImageFromUrl(anyPayload.image.imageUrl, anyPayload.image.caption);
   } else if (anyPayload.text?.message) {
-    messageKind = 'text';
     userContent = anyPayload.text.message;
   } else if (typeof anyPayload.body === 'string') {
-    messageKind = 'text';
     userContent = anyPayload.body;
   } else if (typeof anyPayload.message === 'string') {
-    messageKind = 'text';
     userContent = anyPayload.message;
   }
 
   if (!userContent.trim()) {
-    logger.warn(
-      { phone, type: payload.type, messageId: payload.messageId, payloadKeys: Object.keys(anyPayload) },
-      'Mensagem sem conteúdo extraível — payload desconhecido'
-    );
+    logger.warn({ phone, payloadKeys: Object.keys(anyPayload) }, 'Mensagem sem conteúdo');
     return;
   }
 
-  // 5. Cliente disse "NÃO" (ou keyword configurada) → PAUSA follow-up
-  //    Não é mais opt-out permanente: ao voltar a falar, follow-up volta.
+  // 4. Opt-out keyword detection
   if (detectOptOut(userContent)) {
-    await pauseFollowupForClient(client.id);
+    await markClientOptOut(client.id);
     await cancelPendingFollowups(client.id);
-    await sendTextWithTyping(
-      phone,
-      'Ok, vou parar com os lembretes por agora 💛 Quando quiser ver as peças novas, é só me chamar!'
-    );
+    logger.info({ phone }, 'Cliente optou por sair — opt_out marcado');
     return;
   }
 
-  // 5b. Cliente voltou a falar → retoma follow-up (caso estivesse pausado)
-  await resumeFollowupForClient(client.id);
+  // 5. Resume followups if client is back
+  if (client.followup_paused) {
+    await resumeFollowupsForClient(client.id);
+  }
 
-  // 6. Detectar emoção
-  const emotion = await detectEmotion(userContent);
-  await updateClientEmotion(client.id, emotion);
+  // 6. Get or create conversation
+  const conversation = await getOrCreateConversation(client.id);
 
-  // 7. Salvar mensagem do usuário no banco
-  const userMessage = await saveMessage({
-    conversationId: conversation.id,
-    clientId: client.id,
-    role: 'user',
-    content: userContent,
-    messageType: messageKind,
-    mediaUrl,
-    zapiMessageId: payload.messageId,
-    emotionDetected: emotion,
-  });
-
-  // 8. Marcar como lida
+  // 7. Mark as read
   if (config.ZAPI_AUTO_READ) {
     await markMessageAsRead(phone, payload.messageId);
   }
 
-  // 9. Cancelar follow-ups pendentes (cliente respondeu)
-  await cancelPendingFollowups(client.id);
+  // 8. BEHAVIORAL ANALYSIS (silent — no response sent to client)
+  const analysis = await analyzeBehavior(userContent, messageType);
 
-  // 10. Buscar memória curta e longa
-  const shortTermMemory = await getShortTermMemory(conversation.id);
-  const relevantMemories = await searchRelevantMemories(client.id, userContent);
-  const longTermSummary = await getClientSummaryForContext(client);
+  // 9. Update lead score
+  const scoreEvents = [...analysis.scoreEvents];
+  if (client.total_interactions === 0) scoreEvents.push('first_contact');
+  if (client.total_interactions > 0) scoreEvents.push('multiple_interactions');
+  await recordMultipleScoreEvents(client.id, scoreEvents);
 
-  // 11. Construir contexto da IA
-  const aiContext: AIContext = {
-    clientName: extractFirstName(client.preferred_name || client.name || ''),
-    shortTermMemory,
-    longTermSummary,
-    relevantMemories: relevantMemories.map(m => m.content),
-    detectedEmotion: emotion,
-    conversationStatus: conversation.status as ConversationStatus,
-  };
+  // 10. Update behavioral profile
+  await upsertBehaviorProfile(client.id, analysis);
+  await updateClientEmotion(client.id, analysis.emotion);
+  await updateClientIntent(client.id, analysis.intent);
+  await updatePreferredContactHour(client.id);
 
-  // 12. Gerar resposta da Amanda
-  const aiResponse = await generateAmandaResponse(aiContext);
-
-  // 13. Salvar mensagem da Amanda
-  const amandaMessage = await saveMessage({
+  // 11. Save message to DB
+  await saveMessage({
     conversationId: conversation.id,
     clientId: client.id,
-    role: 'assistant',
-    content: aiResponse.content,
-    messageType: 'text',
-    emotionDetected: aiResponse.detectedEmotion,
-    tokensUsed: aiResponse.tokensUsed,
+    role: 'client',
+    content: userContent,
+    messageType,
+    mediaUrl,
+    zapiMessageId: payload.messageId,
+    emotionDetected: analysis.emotion,
+    intentDetected: analysis.intent,
   });
 
-  // 14. Atualizar memória de curto prazo
-  await addMessageToShortTerm(conversation.id, userMessage);
-  await addMessageToShortTerm(conversation.id, amandaMessage);
-
-  // 15. Enviar resposta (texto ou áudio)
-  const shouldSendAudio =
-    Math.random() < config.AMANDA_AUDIO_REPLY_PROBABILITY &&
-    messageKind === 'audio';
-
-  if (shouldSendAudio) {
-    const audioBuffer = await generateAudioResponse(aiResponse.content);
-    await sendAudioMessage(phone, audioBuffer);
-  } else {
-    await sendBalloonsWithTyping(phone, aiResponse.content);
+  // 12. Save to long-term memory
+  if (analysis.summary) {
+    await saveInteractionMemory(client.id, userContent, analysis.summary);
   }
 
-  // 16. Salvar interação na memória longa
-  await saveInteractionAsMemory(client.id, userContent, aiResponse.content);
-
-  // 17. Atualizar última interação
-  await updateClientLastContact(client.id);
+  // 13. Update counters
+  await incrementInteractions(client.id);
   await updateConversationLastMessage(conversation.id);
 
-  // 18. Handoff automático se necessário
-  if (aiResponse.shouldTriggerHandoff) {
-    await triggerHandoffFlow(conversation.id, client.id, aiContext.longTermSummary);
-  }
+  // 14. Cancel existing follow-ups and schedule new one (client is now warm)
+  await cancelPendingFollowups(client.id);
+  await scheduleFollowup(client.id, conversation.id, 1);
 
-  // 19. Agendar follow-up se aplicável
-  if (aiResponse.suggestedFollowup) {
-    await scheduleFollowup(client.id, conversation.id, 1);
-  }
-
-  logger.info({ phone, tokensUsed: aiResponse.tokensUsed }, 'Mensagem processada com sucesso');
-}
-
-async function handleStaffMessage(
-  phone: string,
-  name: string | undefined,
-  payload: ZApiWebhookPayload
-): Promise<void> {
-  try {
-    const client = await getOrCreateClient(phone, name);
-    const conversation = await getOrCreateConversation(client.id);
-    await checkAndHandleHandoff(conversation.id, client.id, phone, payload);
-    logger.info(
-      { phone, text: payload.text?.message },
-      'Mensagem do staff processada (handoff toggle)'
-    );
-  } catch (err) {
-    logger.error({ err, phone }, 'Erro ao processar mensagem do staff');
-  }
-}
-
-async function getOrCreateConversation(
-  clientId: string
-): Promise<{ id: string; status: string; handoff_active: boolean }> {
-  const existing = await queryOne<{ id: string; status: string; handoff_active: boolean }>(
-    `SELECT id, status, handoff_active FROM conversas
-     WHERE client_id = $1 AND status = 'active'
-     ORDER BY last_message_at DESC
-     LIMIT 1`,
-    [clientId]
+  logger.info(
+    {
+      phone,
+      emotion: analysis.emotion,
+      intent: analysis.intent,
+      scoreEvents,
+      urgency: analysis.urgencyLevel,
+    },
+    '✅ Mensagem analisada e follow-up agendado'
   );
-
-  if (existing) return existing;
-
-  const [created] = await query<{ id: string; status: string; handoff_active: boolean }>(
-    `INSERT INTO conversas (client_id) VALUES ($1) RETURNING id, status, handoff_active`,
-    [clientId]
-  );
-
-  return created!;
-}
-
-async function saveMessage(params: {
-  conversationId: string;
-  clientId: string;
-  role: string;
-  content: string;
-  messageType: string;
-  mediaUrl?: string;
-  zapiMessageId?: string;
-  emotionDetected?: string;
-  tokensUsed?: number;
-}): Promise<Mensagem> {
-  const [msg] = await query<Mensagem>(
-    `INSERT INTO mensagens
-       (id, conversation_id, client_id, role, content, message_type, media_url, zapi_message_id, emotion_detected, tokens_used)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-     RETURNING *`,
-    [
-      uuidv4(),
-      params.conversationId,
-      params.clientId,
-      params.role,
-      params.content,
-      params.messageType,
-      params.mediaUrl ?? null,
-      params.zapiMessageId ?? null,
-      params.emotionDetected ?? null,
-      params.tokensUsed ?? null,
-    ]
-  );
-  return msg!;
-}
-
-async function updateConversationLastMessage(conversationId: string): Promise<void> {
-  await query(
-    `UPDATE conversas
-     SET last_message_at = NOW(), message_count = message_count + 1, updated_at = NOW()
-     WHERE id = $1`,
-    [conversationId]
-  );
-}
-
-async function getClientSummaryForContext(client: {
-  id: string;
-  purchase_count: number;
-  name: string | null;
-}): Promise<string> {
-  if (client.purchase_count === 0) return '';
-  return `Cliente com ${client.purchase_count} compra(s) anterior(es).`;
-}
-
-async function triggerHandoffFlow(
-  conversationId: string,
-  clientId: string,
-  contextSummary: string
-): Promise<void> {
-  await query(
-    `UPDATE conversas
-     SET status = 'handoff', handoff_active = TRUE, handoff_started_at = NOW(), updated_at = NOW()
-     WHERE id = $1`,
-    [conversationId]
-  );
-
-  await query(
-    `INSERT INTO handoffs (conversation_id, client_id, context_at_handoff)
-     VALUES ($1, $2, $3)`,
-    [conversationId, clientId, contextSummary]
-  );
-
-  logger.info({ conversationId }, 'Handoff ativado');
 }

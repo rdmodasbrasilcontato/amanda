@@ -1,49 +1,25 @@
-import { query } from '../../database/connection';
+import { redisGet, redisSet, redisDel } from '../../cache/redis.client';
+import { config } from '../../config';
 import { Mensagem } from '../../types';
-import { redisGet, redisSet } from '../../cache/redis.client';
-import { logger } from '../../utils/logger';
 
-const SHORT_TERM_LIMIT = 30;
+const MAX_MESSAGES = 10;
+
+function key(conversationId: string) {
+  return `stm:${conversationId}`;
+}
 
 export async function getShortTermMemory(conversationId: string): Promise<Mensagem[]> {
-  const cacheKey = `stm:${conversationId}`;
-
-  const cached = await redisGet(cacheKey);
-  if (cached) {
-    return JSON.parse(cached) as Mensagem[];
-  }
-
-  const rows = await query<Mensagem>(
-    `SELECT * FROM mensagens
-     WHERE conversation_id = $1
-       AND role IN ('user', 'assistant')
-     ORDER BY created_at DESC
-     LIMIT $2`,
-    [conversationId, SHORT_TERM_LIMIT]
-  );
-
-  const messages = rows.reverse();
-
-  await redisSet(cacheKey, JSON.stringify(messages), 3600);
-  return messages;
+  const data = await redisGet(key(conversationId));
+  if (!data) return [];
+  try { return JSON.parse(data) as Mensagem[]; } catch { return []; }
 }
 
-export async function addMessageToShortTerm(
-  conversationId: string,
-  message: Mensagem
-): Promise<void> {
-  const cacheKey = `stm:${conversationId}`;
-  const cached = await redisGet(cacheKey);
-  const messages: Mensagem[] = cached ? JSON.parse(cached) : [];
-
-  messages.push(message);
-  if (messages.length > SHORT_TERM_LIMIT) {
-    messages.shift();
-  }
-
-  await redisSet(cacheKey, JSON.stringify(messages), 3600);
+export async function addMessageToShortTerm(conversationId: string, message: Mensagem): Promise<void> {
+  const existing = await getShortTermMemory(conversationId);
+  const updated = [...existing, message].slice(-MAX_MESSAGES);
+  await redisSet(key(conversationId), JSON.stringify(updated), config.REDIS_TTL_SESSION_SECONDS);
 }
 
-export async function clearShortTermCache(conversationId: string): Promise<void> {
-  await redisSet(`stm:${conversationId}`, JSON.stringify([]), 1);
+export async function clearShortTermMemory(conversationId: string): Promise<void> {
+  await redisDel(key(conversationId));
 }

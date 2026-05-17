@@ -1,160 +1,137 @@
 import { Router, Request, Response } from 'express';
 import { requireAdminKey, adminRateLimit } from '../security/rate-limiter';
-import { query, queryOne } from '../database/connection';
+import { query, queryOne, checkDatabaseConnection } from '../database/connection';
 import { getInstanceStatus, getQRCode } from '../modules/whatsapp/zapi.service';
-import { getActiveHandoffs } from '../modules/handoff/handoff.service';
-import { processDueFollowups } from '../modules/followup/followup.service';
-import { updateProductEmbedding } from '../modules/memory/vector.service';
-import { invalidatePromptsCache } from '../modules/ai/prompts.loader';
-import { checkDatabaseConnection } from '../database/connection';
 import { logger } from '../utils/logger';
+import { config } from '../config';
 
 const router = Router();
 
-router.use(adminRateLimit, requireAdminKey);
+router.use(adminRateLimit);
+router.use(requireAdminKey);
 
-// ── Status ──
+// GET /admin/status
 router.get('/status', async (_req: Request, res: Response) => {
-  const [dbOk, waStatus] = await Promise.all([
-    checkDatabaseConnection(),
-    getInstanceStatus(),
-  ]);
+  const dbOk = await checkDatabaseConnection();
+  const zapiStatus = await getInstanceStatus();
+
+  const [clientCount] = await query<{ count: string }>('SELECT COUNT(*) as count FROM clientes');
+  const [followupCount] = await query<{ count: string }>(
+    `SELECT COUNT(*) as count FROM followups WHERE status = 'pending'`
+  );
+  const [hotLeads] = await query<{ count: string }>(
+    `SELECT COUNT(*) as count FROM clientes WHERE lead_temperature IN ('hot','very_hot') AND opt_out = FALSE`
+  );
 
   res.json({
-    status: 'online',
-    database: dbOk,
-    whatsapp: waStatus,
-    timestamp: new Date().toISOString(),
+    app: config.APP_NAME,
+    version: config.APP_VERSION,
+    database: dbOk ? 'connected' : 'disconnected',
+    whatsapp: zapiStatus,
+    stats: {
+      totalClients: parseInt(clientCount?.count ?? '0'),
+      pendingFollowups: parseInt(followupCount?.count ?? '0'),
+      hotLeads: parseInt(hotLeads?.count ?? '0'),
+    },
   });
 });
 
-// ── WhatsApp QR Code ──
+// GET /admin/qrcode
 router.get('/qrcode', async (_req: Request, res: Response) => {
   const qr = await getQRCode();
-  res.json({ qrcode: qr });
+  res.json({ qrCode: qr });
 });
 
-// ── Clientes ──
-router.get('/clientes', async (req: Request, res: Response) => {
-  const page = parseInt(req.query['page'] as string ?? '1');
-  const limit = parseInt(req.query['limit'] as string ?? '20');
-  const offset = (page - 1) * limit;
+// GET /admin/clients
+router.get('/clients', async (req: Request, res: Response) => {
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+  const offset = parseInt(req.query.offset as string) || 0;
+  const temperature = req.query.temperature as string;
 
-  const clients = await query(
-    'SELECT * FROM clientes ORDER BY last_contact_at DESC NULLS LAST LIMIT $1 OFFSET $2',
-    [limit, offset]
-  );
-  res.json({ data: clients, page, limit });
-});
-
-router.get('/clientes/:id', async (req: Request, res: Response) => {
-  const client = await queryOne('SELECT * FROM clientes WHERE id = $1', [req.params['id']]);
-  if (!client) { res.status(404).json({ error: 'Cliente não encontrado' }); return; }
-  res.json(client);
-});
-
-// ── Conversas ──
-router.get('/conversas', async (req: Request, res: Response) => {
-  const clientId = req.query['client_id'];
-  const status = req.query['status'];
-
-  let sql = 'SELECT * FROM conversas WHERE 1=1';
+  let sql = `SELECT id, phone, name, lead_score, lead_temperature, emotion_profile, dominant_intent,
+                    total_interactions, opt_out, followup_paused, last_seen_at, created_at
+             FROM clientes`;
   const params: unknown[] = [];
 
-  if (clientId) {
-    params.push(clientId);
-    sql += ` AND client_id = $${params.length}`;
-  }
-  if (status) {
-    params.push(status);
-    sql += ` AND status = $${params.length}`;
+  if (temperature) {
+    sql += ` WHERE lead_temperature = $${params.length + 1}`;
+    params.push(temperature);
   }
 
-  sql += ' ORDER BY last_message_at DESC LIMIT 50';
+  sql += ` ORDER BY lead_score DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+  params.push(limit, offset);
 
-  const conversations = await query(sql, params);
-  res.json({ data: conversations });
+  const clients = await query(sql, params);
+  res.json({ clients, limit, offset });
 });
 
-// ── Mensagens ──
-router.get('/mensagens/:conversationId', async (req: Request, res: Response) => {
-  const messages = await query(
-    'SELECT * FROM mensagens WHERE conversation_id = $1 ORDER BY created_at ASC',
-    [req.params['conversationId']]
+// GET /admin/clients/:id
+router.get('/clients/:id', async (req: Request, res: Response) => {
+  const client = await queryOne('SELECT * FROM clientes WHERE id = $1', [req.params.id]);
+  if (!client) { res.status(404).json({ error: 'Cliente não encontrado' }); return; }
+
+  const profile = await queryOne('SELECT * FROM customer_behavior_profile WHERE client_id = $1', [req.params.id]);
+  const events = await query(
+    'SELECT * FROM lead_score_events WHERE client_id = $1 ORDER BY created_at DESC LIMIT 20',
+    [req.params.id]
   );
-  res.json({ data: messages });
-});
-
-// ── Handoffs ──
-router.get('/handoffs/active', async (_req: Request, res: Response) => {
-  const handoffs = await getActiveHandoffs();
-  res.json({ data: handoffs });
-});
-
-// ── Follow-ups ──
-router.get('/followups', async (req: Request, res: Response) => {
-  const status = req.query['status'] ?? 'pending';
   const followups = await query(
-    'SELECT * FROM followups WHERE status = $1 ORDER BY scheduled_at ASC LIMIT 50',
+    'SELECT * FROM followups WHERE client_id = $1 ORDER BY created_at DESC LIMIT 10',
+    [req.params.id]
+  );
+
+  res.json({ client, profile, scoreEvents: events, followups });
+});
+
+// GET /admin/followups
+router.get('/followups', async (req: Request, res: Response) => {
+  const status = (req.query.status as string) || 'pending';
+  const followups = await query(
+    `SELECT f.*, c.phone, c.name FROM followups f
+     JOIN clientes c ON c.id = f.client_id
+     WHERE f.status = $1 ORDER BY f.scheduled_at ASC LIMIT 50`,
     [status]
   );
-  res.json({ data: followups });
+  res.json({ followups });
 });
 
-router.post('/followups/process', async (_req: Request, res: Response) => {
-  await processDueFollowups();
-  res.json({ message: 'Follow-ups processados' });
-});
-
-// ── Produtos ──
-router.get('/produtos', async (_req: Request, res: Response) => {
-  const products = await query('SELECT * FROM produtos WHERE active = TRUE ORDER BY name');
-  res.json({ data: products });
-});
-
-router.post('/produtos', async (req: Request, res: Response) => {
-  const { name, description, price, category, sizes, colors, images, sku } = req.body;
-  const [product] = await query(
-    `INSERT INTO produtos (name, description, price, category, sizes, colors, images, sku)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-    [name, description, price, category, sizes ?? [], colors ?? [], images ?? [], sku ?? null]
+// POST /admin/clients/:id/opt-out
+router.post('/clients/:id/opt-out', async (req: Request, res: Response) => {
+  await query(
+    'UPDATE clientes SET opt_out = TRUE, opt_out_at = NOW(), updated_at = NOW() WHERE id = $1',
+    [req.params.id]
   );
-  await updateProductEmbedding((product as { id: string }).id);
-  res.status(201).json(product);
-});
-
-router.put('/produtos/:id', async (req: Request, res: Response) => {
-  const { name, description, price, category, sizes, colors, images, stock_quantity, active } = req.body;
-  const [updated] = await query(
-    `UPDATE produtos SET name=$1, description=$2, price=$3, category=$4, sizes=$5, colors=$6,
-     images=$7, stock_quantity=$8, active=$9, updated_at=NOW() WHERE id=$10 RETURNING *`,
-    [name, description, price, category, sizes, colors, images, stock_quantity, active, req.params['id']]
+  await query(
+    `UPDATE followups SET status = 'cancelled', cancelled_reason = 'opt_out', updated_at = NOW()
+     WHERE client_id = $1 AND status = 'pending'`,
+    [req.params.id]
   );
-  if (updated) await updateProductEmbedding(req.params.id as string);
-  res.json(updated);
+  res.json({ success: true });
 });
 
-// ── Analytics ──
-router.get('/analytics/overview', async (_req: Request, res: Response) => {
-  const [clients, conversations, messages, followups] = await Promise.all([
-    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM clientes'),
-    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM conversas WHERE status = $1', ['active']),
-    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM mensagens WHERE created_at > NOW() - INTERVAL \'24 hours\''),
-    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM followups WHERE status = $1', ['pending']),
-  ]);
-
-  res.json({
-    totalClients: parseInt(clients?.count ?? '0'),
-    activeConversations: parseInt(conversations?.count ?? '0'),
-    messagesLast24h: parseInt(messages?.count ?? '0'),
-    pendingFollowups: parseInt(followups?.count ?? '0'),
-  });
+// POST /admin/clients/:id/pause-followup
+router.post('/clients/:id/pause-followup', async (req: Request, res: Response) => {
+  await query(
+    'UPDATE clientes SET followup_paused = TRUE, followup_paused_at = NOW(), updated_at = NOW() WHERE id = $1',
+    [req.params.id]
+  );
+  res.json({ success: true });
 });
 
-// ── Configurações ──
-router.post('/prompts/reload', (_req: Request, res: Response) => {
-  invalidatePromptsCache();
-  res.json({ message: 'Cache de prompts invalidado' });
+// GET /admin/analytics
+router.get('/analytics', async (_req: Request, res: Response) => {
+  const [byTemperature] = [
+    await query(
+      `SELECT lead_temperature, COUNT(*) as count FROM clientes WHERE opt_out = FALSE GROUP BY lead_temperature`
+    ),
+  ];
+  const sentLast7 = await query<{ date: string; count: string }>(
+    `SELECT DATE(sent_at) as date, COUNT(*) as count
+     FROM followups WHERE status = 'sent' AND sent_at > NOW() - INTERVAL '7 days'
+     GROUP BY DATE(sent_at) ORDER BY date`
+  );
+
+  res.json({ leadsByTemperature: byTemperature, followupsSentLast7Days: sentLast7 });
 });
 
 export default router;

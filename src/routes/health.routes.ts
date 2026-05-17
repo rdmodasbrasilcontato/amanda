@@ -6,13 +6,12 @@ const router = Router();
 
 router.get('/', async (_req, res) => {
   const dbOk = await checkDatabaseConnection();
-  res.json({
-    status: dbOk ? 'healthy' : 'degraded',
+  res.status(dbOk ? 200 : 503).json({
+    status: dbOk ? 'healthy' : 'unhealthy',
     app: config.APP_NAME,
     version: config.APP_VERSION,
-    environment: config.NODE_ENV,
-    timestamp: new Date().toISOString(),
     database: dbOk ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString(),
   });
 });
 

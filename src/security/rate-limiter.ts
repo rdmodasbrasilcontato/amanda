@@ -4,7 +4,7 @@ import { logger } from '../utils/logger';
 
 export const generalRateLimit = rateLimit({
   windowMs: 60 * 1000,
-  max: config.RATE_LIMIT_PER_MINUTE,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {

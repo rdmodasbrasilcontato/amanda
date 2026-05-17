@@ -1,55 +1,39 @@
 import { Request, Response } from 'express';
 import { ZApiWebhookPayload } from '../types';
 import { enqueueMessage } from '../queue/message.queue';
-import { config } from '../config';
 import { logger } from '../utils/logger';
 
+const IGNORED_TYPES = ['DeliveryCallback', 'ReadCallback', 'PresenceCallback', 'SentCallback', 'MessageStatusCallback'];
+
 export async function handleZApiWebhook(req: Request, res: Response): Promise<void> {
-  // Responder imediatamente para Z-API não reenviar
+  // Respond immediately so Z-API doesn't retry
   res.status(200).json({ received: true });
 
   const payload = req.body as ZApiWebhookPayload;
 
-  // Ignorar eventos que não são mensagens recebidas
-  if (!payload || !payload.phone || !payload.messageId) {
+  if (!payload?.phone || !payload?.messageId) return;
+
+  // Ignore own API messages
+  if (payload.fromMe) {
+    const fromApi = (payload as any).fromApi === true;
+    if (fromApi) return;
+    // fromMe=true but not from API = staff typing on phone — ignore in silent mode
     return;
   }
 
-  // fromMe = enviado pelo número da instância (staff ou Amanda via API)
-  // Encaminhar ao processador: ele distingue fromApi=true (ignora) vs staff (handoff toggle)
-
-  // Ignorar grupos — Z-API nem sempre seta isGroupMsg, então também detectamos
-  // pelo formato do phone: IDs de grupo têm "-group" ou são longos demais (>15 dígitos)
+  // Ignore groups
   const phoneRaw = String(payload.phone);
-  const isGroup =
+  if (
     payload.isGroupMsg === true ||
     phoneRaw.includes('-group') ||
     phoneRaw.includes('@g.us') ||
-    phoneRaw.replace(/\D/g, '').length > 15;
-  if (isGroup) {
-    logger.debug({ phone: payload.phone }, 'Ignorando mensagem de grupo');
-    return;
-  }
+    phoneRaw.replace(/\D/g, '').length > 15
+  ) return;
 
-  // Ignorar eventos de status (delivered, read, etc.)
-  const ignoredTypes = ['DeliveryCallback', 'ReadCallback', 'PresenceCallback', 'SentCallback'];
-  if (ignoredTypes.includes(payload.type)) {
-    return;
-  }
+  // Ignore status events
+  if (IGNORED_TYPES.includes(payload.type)) return;
 
-  logger.info(
-    { phone: payload.phone, type: payload.type, messageId: payload.messageId },
-    'Webhook Z-API recebido'
-  );
+  logger.info({ phone: payload.phone, type: payload.type, messageId: payload.messageId }, '📨 Webhook recebido');
 
   await enqueueMessage(payload);
-}
-
-export function verifyZApiToken(req: Request, res: Response, next: () => void): void {
-  const token = req.headers['x-webhook-token'] ?? req.query.token;
-  if (token !== config.ZAPI_WEBHOOK_VERIFY_TOKEN) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
-  next();
 }
