@@ -104,7 +104,7 @@ export interface MemoriaVetorial {
   client_id: string;
   content: string;
   embedding: number[];
-  memory_type: 'preference' | 'purchase' | 'behavior' | 'objection' | 'style' | 'summary';
+  memory_type: 'preference' | 'purchase' | 'behavior' | 'objection' | 'style' | 'summary' | 'interaction';
   source_message_id: string | null;
   created_at: Date;
 }

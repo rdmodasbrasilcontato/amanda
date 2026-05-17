@@ -170,7 +170,7 @@ router.get('/api/prompts', (_req: Request, res: Response) => {
 
 // ── Prompts POST ──
 router.post('/api/prompts/:name', (req: Request, res: Response) => {
-  const { name } = req.params;
+  const name = req.params.name as string;
   if (!PROMPT_FILES.includes(name)) {
     return res.status(400).json({ error: 'Prompt inválido' }) as any;
   }

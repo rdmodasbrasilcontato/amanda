@@ -163,7 +163,7 @@ export async function detectEmotion(message: string): Promise<EmotionType> {
 }
 
 function buildSystemPrompt(
-  prompts: Record<string, string>,
+  prompts: Record<string, unknown>,
   context: AIContext
 ): string {
   const parts = [
