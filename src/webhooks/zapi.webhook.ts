@@ -15,11 +15,8 @@ export async function handleZApiWebhook(req: Request, res: Response): Promise<vo
     return;
   }
 
-  // Ignorar mensagens do próprio bot
-  if (payload.fromMe) {
-    logger.debug({ type: payload.type }, 'Ignorando mensagem própria');
-    return;
-  }
+  // fromMe = enviado pelo número da instância (staff ou Amanda via API)
+  // Encaminhar ao processador: ele distingue fromApi=true (ignora) vs staff (handoff toggle)
 
   // Ignorar grupos — Z-API nem sempre seta isGroupMsg, então também detectamos
   // pelo formato do phone: IDs de grupo têm "-group" ou são longos demais (>15 dígitos)
