@@ -7,6 +7,7 @@ import { getRedisClient } from './cache/redis.client';
 import { startFollowupJob } from './jobs/followup.job';
 import { startHandoffTimeoutJob } from './jobs/handoff.job';
 import { ensureFollowupColumns } from './state/followup.config';
+import { registerWebhook } from './modules/whatsapp/zapi.service';
 
 async function bootstrap(): Promise<void> {
   logger.info(`🚀 Iniciando ${config.APP_NAME} v${config.APP_VERSION}...`);
@@ -29,6 +30,14 @@ async function bootstrap(): Promise<void> {
 
   // Garantir colunas de follow-up (idempotente)
   await ensureFollowupColumns();
+
+  // Registrar webhook no Z-API se URL pública estiver configurada
+  const publicUrl = config.WEBHOOK_BASE_URL;
+  if (publicUrl) {
+    await registerWebhook(publicUrl);
+  } else {
+    logger.warn('⚠️  WEBHOOK_BASE_URL não definida no .env — configure manualmente no painel Z-API: POST /webhook/zapi');
+  }
 
   // Iniciar jobs
   startFollowupJob();

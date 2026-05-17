@@ -235,3 +235,23 @@ export async function getQRCode(): Promise<string | null> {
     return null;
   }
 }
+
+export async function registerWebhook(publicUrl: string): Promise<boolean> {
+  const webhookUrl = `${publicUrl.replace(/\/+$/, '')}/webhook/zapi`;
+  try {
+    // Z-API endpoint para configurar webhook de recebimento
+    await zapiClient.put('/update-webhook-received', { value: webhookUrl });
+    logger.info({ webhookUrl }, '✅ Webhook registrado no Z-API');
+    return true;
+  } catch (err: any) {
+    // Tenta endpoint alternativo de algumas versões do Z-API
+    try {
+      await zapiClient.put('/webhook', { value: webhookUrl });
+      logger.info({ webhookUrl }, '✅ Webhook registrado no Z-API (fallback)');
+      return true;
+    } catch {
+      logger.warn({ webhookUrl, err: err?.message }, '⚠️  Não foi possível registrar webhook automaticamente — configure manualmente no painel Z-API');
+      return false;
+    }
+  }
+}
