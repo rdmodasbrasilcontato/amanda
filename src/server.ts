@@ -6,6 +6,7 @@ import { checkDatabaseConnection } from './database/connection';
 import { getRedisClient } from './cache/redis.client';
 import { startFollowupJob } from './jobs/followup.job';
 import { startHandoffTimeoutJob } from './jobs/handoff.job';
+import { ensureFollowupColumns } from './state/followup.config';
 
 async function bootstrap(): Promise<void> {
   logger.info(`🚀 Iniciando ${config.APP_NAME} v${config.APP_VERSION}...`);
@@ -25,6 +26,9 @@ async function bootstrap(): Promise<void> {
   } else {
     logger.warn('⚠️  Redis não configurado — debounce e cache em memória');
   }
+
+  // Garantir colunas de follow-up (idempotente)
+  await ensureFollowupColumns();
 
   // Iniciar jobs
   startFollowupJob();

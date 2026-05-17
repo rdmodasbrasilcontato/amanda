@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { ZApiWebhookPayload, ProcessedMessage, AIContext, Mensagem, ConversationStatus } from '../../types';
 import { getOrCreateClient, updateClientLastContact, updateClientEmotion, saveInteractionAsMemory, markClientOptOut } from '../memory/long-term.service';
+import { pauseFollowupForClient, resumeFollowupForClient } from '../../state/followup.config';
 import { getShortTermMemory, addMessageToShortTerm } from '../memory/short-term.service';
 import { searchRelevantMemories } from '../memory/vector.service';
 import { generateAmandaResponse, detectEmotion } from '../ai/openai.service';
@@ -120,16 +121,20 @@ export async function processIncomingMessage(payload: ZApiWebhookPayload): Promi
     return;
   }
 
-  // 5. Verificar opt-out explícito na mensagem
+  // 5. Cliente disse "NÃO" (ou keyword configurada) → PAUSA follow-up
+  //    Não é mais opt-out permanente: ao voltar a falar, follow-up volta.
   if (detectOptOut(userContent)) {
-    await markClientOptOut(client.id);
+    await pauseFollowupForClient(client.id);
     await cancelPendingFollowups(client.id);
     await sendTextWithTyping(
       phone,
-      'Tudo bem! Não vou mais te enviar mensagens 💛 Se um dia quiser ver nossos produtos, é só me chamar!'
+      'Ok, vou parar com os lembretes por agora 💛 Quando quiser ver as peças novas, é só me chamar!'
     );
     return;
   }
+
+  // 5b. Cliente voltou a falar → retoma follow-up (caso estivesse pausado)
+  await resumeFollowupForClient(client.id);
 
   // 6. Detectar emoção
   const emotion = await detectEmotion(userContent);

@@ -107,6 +107,10 @@
       <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
       Prompts
     </button>
+    <button class="nav-btn" id="nav-followup" onclick="showSection('followup')">
+      <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      Follow-up
+    </button>
     <button class="nav-btn" id="nav-config" onclick="showSection('config')">
       <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
       Configurações
@@ -250,6 +254,54 @@
       </div>
     </section>
 
+    <!-- ═══ FOLLOW-UP ═══ -->
+    <section id="section-followup">
+      <div style="max-width:680px; display:flex; flex-direction:column; gap:20px;">
+
+        <!-- Tempos de envio -->
+        <div class="card" style="padding:24px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+            <h2 style="font-size:15px; font-weight:700; margin:0;">Tempos de envio</h2>
+            <button class="btn-primary" onclick="saveFollowupConfig()" style="padding:8px 20px;">Salvar tudo</button>
+          </div>
+          <p style="font-size:12px; color:var(--muted); margin:0 0 20px;">Configure o intervalo de horas entre cada tentativa de follow-up (valores decimais permitidos — ex: 0.33 = 20 min, 0.5 = 30 min).</p>
+
+          <div id="schedule-rows" style="display:flex; flex-direction:column; gap:10px;"></div>
+
+          <div style="display:flex; gap:8px; margin-top:14px;">
+            <button class="btn-outline" onclick="addScheduleRow()" style="font-size:12px;">+ Adicionar tentativa</button>
+          </div>
+        </div>
+
+        <!-- Palavras anti-spam -->
+        <div class="card" style="padding:24px;">
+          <h2 style="font-size:15px; font-weight:700; margin:0 0 6px;">Palavras para parar follow-up</h2>
+          <p style="font-size:12px; color:var(--muted); margin:0 0 16px;">
+            Quando o cliente responder com uma dessas palavras, o follow-up é <strong style="color:var(--text);">pausado</strong> para ele — não é um bloqueio permanente.<br>
+            Assim que ele voltar a falar com a Amanda, o follow-up é retomado normalmente.<br>
+            <span style="color:var(--accent);">Uma palavra por linha.</span>
+          </p>
+
+          <textarea id="keywords-editor" style="min-height:160px; width:100%; text-transform:uppercase;" placeholder="NÃO&#10;PARAR&#10;STOP&#10;SAIR"></textarea>
+
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:12px;">
+            <div style="font-size:12px; color:var(--muted);">
+              Além dessas palavras exatas, frases como <em>"não quero receber"</em>, <em>"me tira da lista"</em> também são detectadas automaticamente.
+            </div>
+            <div id="kw-saved" style="font-size:12px; color:var(--green); display:none; margin-left:16px; flex-shrink:0;">✓ Salvo!</div>
+          </div>
+        </div>
+
+        <!-- Aviso comportamento -->
+        <div style="padding:14px 18px; border-radius:10px; border:1px solid rgba(0,212,255,.2); background:rgba(0,212,255,.04); font-size:13px; color:var(--muted); line-height:1.6;">
+          <strong style="color:var(--accent);">Como funciona:</strong><br>
+          Cliente diz "NÃO" (ou palavra configurada) → follow-up <strong style="color:var(--text);">pausado</strong> só para ele<br>
+          Cliente manda nova mensagem → follow-up <strong style="color:var(--text);">retoma automaticamente</strong>
+        </div>
+
+      </div>
+    </section>
+
     <!-- ═══ CONFIGURAÇÕES ═══ -->
     <section id="section-config">
       <div style="max-width:520px; display:flex; flex-direction:column; gap:20px;">
@@ -328,6 +380,7 @@ function showSection(name) {
     conversas: ['Conversas',       'Clientes em atendimento'],
     qrcode:    ['WhatsApp QR',     'Conectar número ao WhatsApp'],
     prompts:   ['Prompts',         'Editar personalidade da Amanda'],
+    followup:  ['Follow-up',       'Tempos de envio e palavras anti-spam'],
     config:    ['Configurações',   'Logo e opções gerais'],
   };
   document.getElementById('page-title').textContent = titles[name][0];
@@ -336,6 +389,7 @@ function showSection(name) {
   if (name === 'conversas') loadConversations();
   if (name === 'qrcode')    loadQRCode();
   if (name === 'prompts')   loadPrompts();
+  if (name === 'followup')  loadFollowupConfig();
 }
 
 // ── Amanda toggle ──
@@ -577,6 +631,96 @@ function toast(msg, color='green') {
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => { el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),300); }, 3000);
+}
+
+// ── Follow-up Config ──
+let followupCfg = null;
+
+const ATTEMPT_LABELS = [
+  '', '1ª tentativa', '2ª tentativa', '3ª tentativa', '4ª tentativa',
+  '5ª tentativa', '6ª tentativa', '7ª tentativa', '8ª tentativa',
+];
+
+function hoursLabel(h) {
+  if (h < 1) return Math.round(h * 60) + ' min';
+  if (h < 24) return h + ' hora' + (h !== 1 ? 's' : '');
+  if (h < 168) return Math.round(h / 24) + ' dia' + (Math.round(h/24) !== 1 ? 's' : '');
+  if (h < 720) return Math.round(h / 168) + ' semana' + (Math.round(h/168) !== 1 ? 's' : '');
+  return Math.round(h / 720) + ' mês';
+}
+
+function renderScheduleRows(schedule) {
+  const container = document.getElementById('schedule-rows');
+  container.innerHTML = schedule.map((s, i) => `
+    <div style="display:flex; align-items:center; gap:10px; padding:10px 14px; background:rgba(255,255,255,.03); border-radius:8px; border:1px solid var(--border);" data-idx="${i}">
+      <div style="width:110px; font-size:12px; font-weight:600; color:var(--muted); flex-shrink:0;">
+        ${ATTEMPT_LABELS[s.attempt] || s.attempt + 'ª tentativa'}
+      </div>
+      <div style="flex:1; display:flex; align-items:center; gap:8px;">
+        <input type="number" min="0" step="0.01"
+          value="${s.delayHours}"
+          onchange="updateScheduleRow(${i}, this.value)"
+          style="width:90px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:rgba(255,255,255,.05); color:var(--text); font-size:13px; text-align:right;">
+        <span style="font-size:12px; color:var(--muted);">horas</span>
+        <span style="font-size:11px; color:var(--accent);">(${hoursLabel(Number(s.delayHours))})</span>
+      </div>
+      <button onclick="removeScheduleRow(${i})" style="background:none; border:none; color:var(--muted); cursor:pointer; padding:4px 8px; border-radius:4px; font-size:16px; line-height:1;" title="Remover">×</button>
+    </div>
+  `).join('');
+}
+
+function updateScheduleRow(idx, val) {
+  if (!followupCfg) return;
+  followupCfg.schedule[idx].delayHours = parseFloat(val) || 0;
+  // re-render just the label
+  renderScheduleRows(followupCfg.schedule);
+}
+
+function removeScheduleRow(idx) {
+  if (!followupCfg) return;
+  followupCfg.schedule.splice(idx, 1);
+  // renumber attempts
+  followupCfg.schedule = followupCfg.schedule.map((s, i) => ({ ...s, attempt: i + 1 }));
+  renderScheduleRows(followupCfg.schedule);
+}
+
+function addScheduleRow() {
+  if (!followupCfg) return;
+  const last = followupCfg.schedule[followupCfg.schedule.length - 1];
+  followupCfg.schedule.push({ attempt: (last?.attempt || 0) + 1, delayHours: 24 });
+  renderScheduleRows(followupCfg.schedule);
+}
+
+async function loadFollowupConfig() {
+  try {
+    followupCfg = await fetch('/dashboard/api/followup-config').then(r => r.json());
+    renderScheduleRows(followupCfg.schedule);
+    document.getElementById('keywords-editor').value = (followupCfg.optOutKeywords || []).join('\n');
+  } catch { toast('Erro ao carregar config de follow-up', 'red'); }
+}
+
+async function saveFollowupConfig() {
+  if (!followupCfg) return;
+  // Read schedule from DOM inputs
+  const inputs = document.querySelectorAll('#schedule-rows input[type="number"]');
+  const schedule = followupCfg.schedule.map((s, i) => ({
+    attempt: s.attempt,
+    delayHours: parseFloat(inputs[i]?.value) || 0,
+  }));
+  const keywords = document.getElementById('keywords-editor').value
+    .split('\n').map(k => k.trim().toUpperCase()).filter(Boolean);
+  try {
+    const d = await fetch('/dashboard/api/followup-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schedule, optOutKeywords: keywords }),
+    }).then(r => r.json());
+    followupCfg = d;
+    renderScheduleRows(followupCfg.schedule);
+    document.getElementById('kw-saved').style.display = 'inline';
+    setTimeout(() => document.getElementById('kw-saved').style.display = 'none', 3000);
+    toast('✓ Configuração de follow-up salva!', 'green');
+  } catch { toast('Erro ao salvar configuração', 'red'); }
 }
 
 // ── Refresh ──

@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from '
 import multer from 'multer';
 import { query, queryOne } from '../database/connection';
 import { isAmandaEnabled, setAmandaEnabled } from '../state/global.state';
+import { getFollowupConfig, setFollowupConfig } from '../state/followup.config';
 import { getQRCode } from '../modules/whatsapp/zapi.service';
 import { invalidatePromptsCache } from '../modules/ai/prompts.loader';
 import { logger } from '../utils/logger';
@@ -217,6 +218,23 @@ router.get('/api/logo', (_req: Request, res: Response) => {
     if (existsSync(p)) return res.sendFile(p);
   }
   res.status(404).json({ error: 'Nenhuma logo cadastrada' });
+});
+
+// ── Follow-up config GET ──
+router.get('/api/followup-config', (_req: Request, res: Response) => {
+  res.json(getFollowupConfig());
+});
+
+// ── Follow-up config POST ──
+router.post('/api/followup-config', (req: Request, res: Response) => {
+  try {
+    const { schedule, optOutKeywords } = req.body;
+    const updated = setFollowupConfig({ schedule, optOutKeywords });
+    res.json(updated);
+  } catch (err) {
+    logger.error({ err }, 'Dashboard: erro ao salvar config de follow-up');
+    res.status(500).json({ error: 'Erro ao salvar configuração de follow-up' });
+  }
 });
 
 export default router;

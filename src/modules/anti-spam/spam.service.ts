@@ -1,26 +1,35 @@
 import { redisGet, redisSet, redisIncr } from '../../cache/redis.client';
 import { query } from '../../database/connection';
+import { getOptOutKeywords } from '../../state/followup.config';
 import { logger } from '../../utils/logger';
 import { config } from '../../config';
 
-const OPT_OUT_PATTERNS = [
-  /^n[aã]o$/i,
-  /^nao$/i,
-  /^parar?$/i,
-  /^sair$/i,
-  /^cancelar$/i,
+// Padrões fixos (frases compostas — não editáveis pelo dashboard)
+const BASE_PHRASE_PATTERNS = [
   /n[aã]o quero/i,
   /me tira da lista/i,
   /para de me mandar/i,
   /n[aã]o quero (mais )?receber/i,
   /remove (meu|me do)/i,
   /descadastrar/i,
-  /stop$/i,
 ];
+
+function normalize(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
 
 export function detectOptOut(message: string): boolean {
   const clean = message.trim();
-  return OPT_OUT_PATTERNS.some(pattern => pattern.test(clean));
+  const cleanNorm = normalize(clean);
+
+  // 1. Match exato com as palavras configuráveis no dashboard
+  const userKeywords = getOptOutKeywords();
+  if (userKeywords.some(k => normalize(k) === cleanNorm)) return true;
+
+  // 2. Frases compostas (fixas)
+  if (BASE_PHRASE_PATTERNS.some(p => p.test(clean))) return true;
+
+  return false;
 }
 
 export async function isClientCooldown(phone: string): Promise<boolean> {
