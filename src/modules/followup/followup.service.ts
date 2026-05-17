@@ -28,8 +28,8 @@ export async function scheduleFollowup(
   conversationId: string,
   attemptNumber: number
 ): Promise<void> {
-  const client = await queryOne<{ opt_out: boolean; phone: string; followup_paused: boolean }>(
-    'SELECT opt_out, phone, COALESCE(followup_paused, FALSE) AS followup_paused FROM clientes WHERE id = $1',
+  const client = await queryOne<{ opt_out: boolean; phone: string; followup_paused?: boolean }>(
+    'SELECT opt_out, phone FROM clientes WHERE id = $1',
     [clientId]
   );
 
@@ -91,8 +91,8 @@ async function processSingleFollowup(followup: {
   conversation_id: string;
   attempt_number: number;
 }): Promise<void> {
-  const client = await queryOne<{ opt_out: boolean; phone: string; name: string | null; followup_paused: boolean }>(
-    'SELECT opt_out, phone, name, COALESCE(followup_paused, FALSE) AS followup_paused FROM clientes WHERE id = $1',
+  const client = await queryOne<{ opt_out: boolean; phone: string; name: string | null; followup_paused?: boolean }>(
+    'SELECT opt_out, phone, name FROM clientes WHERE id = $1',
     [followup.client_id]
   );
 

@@ -92,16 +92,24 @@ export async function ensureFollowupColumns(): Promise<void> {
 }
 
 export async function pauseFollowupForClient(clientId: string): Promise<void> {
-  await pool.query(
-    `UPDATE clientes SET followup_paused = TRUE, followup_paused_at = NOW(), updated_at = NOW() WHERE id = $1`,
-    [clientId]
-  );
+  try {
+    await pool.query(
+      `UPDATE clientes SET followup_paused = TRUE, followup_paused_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [clientId]
+    );
+  } catch {
+    // coluna ainda não existe — ignorar silenciosamente
+  }
 }
 
 export async function resumeFollowupForClient(clientId: string): Promise<void> {
-  await pool.query(
-    `UPDATE clientes SET followup_paused = FALSE, followup_paused_at = NULL, updated_at = NOW()
-     WHERE id = $1 AND followup_paused = TRUE`,
-    [clientId]
-  );
+  try {
+    await pool.query(
+      `UPDATE clientes SET followup_paused = FALSE, followup_paused_at = NULL, updated_at = NOW()
+       WHERE id = $1 AND followup_paused = TRUE`,
+      [clientId]
+    );
+  } catch {
+    // coluna ainda não existe — ignorar silenciosamente
+  }
 }
