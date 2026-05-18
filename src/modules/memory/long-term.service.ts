@@ -1,116 +1,90 @@
+// ════════════════════════════════════════════════════════
+// Amanda AI — Long-Term Memory Service
+// ════════════════════════════════════════════════════════
+
 import { query, queryOne } from '../../database/connection';
 import { Cliente } from '../../types';
-import { generateEmbedding } from '../ai/openai.service';
-import { saveMemory } from './vector.service';
 import { logger } from '../../utils/logger';
 
-export async function getOrCreateClient(phone: string, name?: string): Promise<Cliente> {
+export async function getOrCreateClient(telefone: string, nome?: string): Promise<Cliente> {
   const existing = await queryOne<Cliente>(
-    'SELECT * FROM clientes WHERE phone = $1',
-    [phone]
+    'SELECT * FROM clientes WHERE telefone = $1',
+    [telefone]
   );
 
   if (existing) {
-    if (name && name !== existing.name) {
+    if (nome && nome !== existing.nome) {
       await query(
-        'UPDATE clientes SET name = $1, updated_at = NOW() WHERE id = $2',
-        [name, existing.id]
+        'UPDATE clientes SET nome = $1, nome_preferido = $2, atualizado_em = NOW() WHERE id = $3',
+        [nome, nome.split(' ')[0], existing.id]
       );
-      existing.name = name;
+      existing.nome = nome;
     }
     return existing;
   }
 
-  const [created] = await query<Cliente>(
-    `INSERT INTO clientes (phone, name, preferred_name)
+  const [criado] = await query<Cliente>(
+    `INSERT INTO clientes (telefone, nome, nome_preferido)
      VALUES ($1, $2, $3)
      RETURNING *`,
-    [phone, name ?? null, name ? name.split(' ')[0] : null]
+    [telefone, nome ?? null, nome ? nome.split(' ')[0] : null]
   );
 
-  logger.info({ phone, name }, 'Novo cliente criado');
-  return created!;
+  logger.info({ telefone, nome }, 'Novo cliente criado');
+  return criado!;
 }
 
-export async function updateClientLastContact(clientId: string): Promise<void> {
+export async function updateClientLastContact(clienteId: string): Promise<void> {
   await query(
-    'UPDATE clientes SET last_contact_at = NOW(), updated_at = NOW() WHERE id = $1',
-    [clientId]
+    'UPDATE clientes SET ultima_interacao = NOW(), atualizado_em = NOW() WHERE id = $1',
+    [clienteId]
   );
 }
 
-export async function updateClientEmotion(
-  clientId: string,
-  emotion: string
-): Promise<void> {
+export async function markClientOptOut(clienteId: string): Promise<void> {
   await query(
     `UPDATE clientes
-     SET emotion_profile = emotion_profile || jsonb_build_object($2::text, COALESCE((emotion_profile->$2)::int, 0) + 1),
-         updated_at = NOW()
+     SET opt_out = TRUE, opt_out_em = NOW(), ia_ativa = FALSE, atualizado_em = NOW()
      WHERE id = $1`,
-    [clientId, emotion]
+    [clienteId]
   );
+  logger.info({ clienteId }, 'Cliente marcado como opt-out');
 }
 
-export async function getClientSummary(clientId: string): Promise<string> {
-  const client = await queryOne<Cliente>(
-    'SELECT * FROM clientes WHERE id = $1',
-    [clientId]
-  );
-  if (!client) return '';
-
-  const recentPurchases = await query<{ name: string; created_at: Date }>(
-    `SELECT p.name, pe.created_at
-     FROM pedidos pe
-     JOIN jsonb_array_elements(pe.items) item ON TRUE
-     JOIN produtos p ON p.id = (item->>'product_id')::uuid
-     WHERE pe.client_id = $1 AND pe.status = 'paid'
-     ORDER BY pe.created_at DESC
-     LIMIT 3`,
-    [clientId]
-  );
-
-  const parts: string[] = [];
-
-  if (client.purchase_count > 0) {
-    parts.push(`Cliente já comprou ${client.purchase_count} vez(es).`);
-  }
-
-  if (recentPurchases.length > 0) {
-    const items = recentPurchases.map(p => p.name).join(', ');
-    parts.push(`Últimas compras: ${items}.`);
-  }
-
-  const dominantEmotion = getDominantEmotion(client.emotion_profile);
-  if (dominantEmotion) {
-    parts.push(`Perfil emocional predominante: ${dominantEmotion}.`);
-  }
-
-  if (client.tags?.length) {
-    parts.push(`Tags: ${client.tags.join(', ')}.`);
-  }
-
-  return parts.join(' ');
-}
-
-function getDominantEmotion(profile: Record<string, number>): string | null {
-  if (!profile || Object.keys(profile).length === 0) return null;
-  return Object.entries(profile).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-}
-
-export async function saveInteractionAsMemory(
-  clientId: string,
-  userMessage: string,
-  amandaResponse: string
+export async function salvarInteracaoMemoria(
+  clienteId: string,
+  mensagemCliente: string,
+  resumoAnalise: string
 ): Promise<void> {
-  const text = `Cliente: "${userMessage}" | Amanda: "${amandaResponse}"`;
-  await saveMemory(clientId, text, 'interaction');
+  const { saveMemory } = await import('./vector.service');
+  const texto = `Cliente: "${mensagemCliente}" | Análise: "${resumoAnalise}"`;
+  await saveMemory(clienteId, texto, 'interacao').catch(() => null);
 }
 
-export async function markClientOptOut(clientId: string): Promise<void> {
-  await query(
-    'UPDATE clientes SET opt_out = TRUE, opt_out_at = NOW(), updated_at = NOW() WHERE id = $1',
-    [clientId]
+export async function getClientSummary(clienteId: string): Promise<string> {
+  const cliente = await queryOne<Cliente>(
+    'SELECT * FROM clientes WHERE id = $1',
+    [clienteId]
   );
-  logger.info({ clientId }, 'Cliente marcado como opt-out');
+  if (!cliente) return '';
+
+  const partes: string[] = [];
+
+  if (cliente.total_pedidos > 0) {
+    partes.push(`Cliente com ${cliente.total_pedidos} compra(s) anterior(es).`);
+  }
+
+  if (cliente.emocao_recorrente) {
+    partes.push(`Emoção predominante: ${cliente.emocao_recorrente}.`);
+  }
+
+  if (cliente.produtos_citados?.length) {
+    partes.push(`Produtos de interesse: ${cliente.produtos_citados.slice(0, 3).join(', ')}.`);
+  }
+
+  if (cliente.perfil_psicologico) {
+    partes.push(`Perfil: ${cliente.perfil_psicologico}.`);
+  }
+
+  return partes.join(' ');
 }

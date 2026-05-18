@@ -1,284 +1,401 @@
+// ════════════════════════════════════════════════════════
+// Amanda AI — Silent Message Processor
+//
+// MODO TOTALMENTE SILENCIOSO:
+// Amanda NUNCA responde mensagens recebidas.
+// Amanda APENAS observa, analisa, memoriza e agenda.
+// ════════════════════════════════════════════════════════
+
 import { v4 as uuidv4 } from 'uuid';
-import { ZApiWebhookPayload, ProcessedMessage, AIContext, Mensagem, ConversationStatus } from '../../types';
-import { getOrCreateClient, updateClientLastContact, updateClientEmotion, saveInteractionAsMemory, markClientOptOut } from '../memory/long-term.service';
-import { getShortTermMemory, addMessageToShortTerm } from '../memory/short-term.service';
-import { searchRelevantMemories } from '../memory/vector.service';
-import { generateAmandaResponse, detectEmotion } from '../ai/openai.service';
-import { sendTextWithTyping, sendAudioMessage, markMessageAsRead } from './zapi.service';
-import { generateAudioResponse } from '../ai/openai.service';
-import { processAudioMessage, processImageMessage, processDocumentMessage } from './media.handler';
+import { ZApiWebhookPayload, Mensagem, TipoMensagem, EtapaFollowup } from '../../types';
 import { query, queryOne } from '../../database/connection';
-import { cancelPendingFollowups, scheduleFollowup } from '../followup/followup.service';
-import { checkAndHandleHandoff } from '../handoff/handoff.service';
-import { detectOptOut } from '../anti-spam/spam.service';
 import { logger } from '../../utils/logger';
 import { config } from '../../config';
-import { extractFirstName, normalizePhone } from '../../utils/helpers';
+import { normalizePhone, extractFirstName } from '../../utils/helpers';
 
+// Serviços de análise
+import { analisarMensagem, analisarImagem, detectarOptOut,
+         isRespostaAFollowup, isRespostaRapida, isRetornoOutroDia } from '../behavioral/behavioral.service';
+import { atualizarPerfil } from '../behavioral/profile.service';
+import { pontuarEventos, extrairEventosDoComportamento } from '../leadScore/leadScore.service';
+import { registrarEventosDaAnalise } from '../events/events.service';
+
+// Serviços de memória
+import { getOrCreateClient, updateClientLastContact, markClientOptOut,
+         salvarInteracaoMemoria } from '../memory/long-term.service';
+import { getShortTermMemory, addMessageToShortTerm, clearShortTermCache } from '../memory/short-term.service';
+import { searchRelevantMemories, saveMemory } from '../memory/vector.service';
+
+// Serviços de follow-up e handoff
+import { agendarFollowup, cancelarFollowupsPendentes } from '../followup/followup.service';
+import { checkAndHandleHandoff } from '../handoff/handoff.service';
+
+// Mídia
+import { processAudioMessage, processImageMessage, processDocumentMessage } from './media.handler';
+import { markMessageAsRead } from './zapi.service';
+
+// Anti-spam
+import { isDeduplicatedMessage } from '../anti-spam/spam.service';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENTRADA PRINCIPAL — processa mensagem recebida silenciosamente
+// ─────────────────────────────────────────────────────────────────────────────
 export async function processIncomingMessage(payload: ZApiWebhookPayload): Promise<void> {
+  // Ignorar mensagens do próprio sistema, grupos e status
   if (payload.fromMe || payload.isGroupMsg) return;
 
-  const phone = normalizePhone(payload.phone);
-  const name = payload.senderName || undefined;
+  const telefone = normalizePhone(payload.phone);
+  const nome     = payload.senderName || undefined;
 
-  logger.info({ phone, type: payload.type }, 'Mensagem recebida');
+  logger.info({ telefone, tipo: payload.type, messageId: payload.messageId }, '📩 Mensagem recebida');
 
-  // 1. Obter ou criar cliente
-  const client = await getOrCreateClient(phone, name);
+  // ── 1. Marcar como lida (só visual, não é resposta) ──
+  if (config.ZAPI_AUTO_READ) {
+    await markMessageAsRead(telefone, payload.messageId).catch(() => null);
+  }
 
-  // Verificar opt-out
-  if (client.opt_out) {
-    logger.info({ phone }, 'Cliente com opt-out — ignorando mensagem');
+  // ── 2. Obter ou criar cliente ─────────────────────────
+  const cliente = await getOrCreateClient(telefone, nome);
+
+  // ── 3. Verificar opt-out ──────────────────────────────
+  if (cliente.opt_out) {
+    logger.info({ telefone }, 'Cliente com opt-out — ignorando silenciosamente');
     return;
   }
 
-  // 2. Obter ou criar conversa ativa
-  const conversation = await getOrCreateConversation(client.id);
+  // ── 4. Obter ou criar conversa ativa ──────────────────
+  const conversa = await obterOuCriarConversa(cliente.id);
 
-  // 3. Verificar handoff ativo
-  const handoffBlocked = await checkAndHandleHandoff(
-    conversation.id,
-    client.id,
-    phone,
-    payload
+  // ── 5. Verificar handoff ativo ────────────────────────
+  const handoffBloqueado = await checkAndHandleHandoff(
+    conversa.id, cliente.id, telefone, payload
   );
-  if (handoffBlocked) return;
+  if (handoffBloqueado) {
+    logger.debug({ telefone }, 'Handoff ativo — Amanda não interfere');
+    return;
+  }
 
-  // 4. Processar conteúdo da mensagem baseado no tipo
-  let userContent = '';
-  let mediaUrl: string | undefined;
+  // ── 6. Processar conteúdo da mensagem ────────────────
+  let conteudo     = '';
+  let conteudoProc = '';
+  let tipoMsg: TipoMensagem = 'texto';
 
   switch (payload.type) {
     case 'ReceivedCallback':
     case 'text':
-      userContent = payload.text?.message ?? '';
+      conteudo  = payload.text?.message ?? '';
+      tipoMsg   = 'texto';
       break;
 
     case 'audio':
       if (payload.audio?.audioUrl) {
-        userContent = await processAudioMessage(payload.audio.audioUrl, client.id, payload.messageId);
-        mediaUrl = payload.audio.audioUrl;
+        const transcricao = await processAudioMessage(
+          payload.audio.audioUrl, cliente.id, payload.messageId
+        );
+        conteudo     = transcricao;
+        conteudoProc = transcricao;
+        tipoMsg      = 'audio';
       }
       break;
 
     case 'image':
       if (payload.image?.imageUrl) {
-        userContent = await processImageMessage(
-          payload.image.imageUrl,
-          payload.image.caption ?? '',
-          client.id,
-          payload.messageId
+        const analiseImg = await analisarImagem(payload.image.imageUrl);
+        const caption    = payload.image.caption ?? '';
+        conteudoProc = analiseImg.descricao;
+        conteudo     = [caption, analiseImg.descricao].filter(Boolean).join('. ');
+        tipoMsg      = 'imagem';
+
+        await processImageMessage(
+          payload.image.imageUrl, caption, cliente.id, payload.messageId
         );
-        mediaUrl = payload.image.imageUrl;
       }
       break;
 
     case 'document':
       if (payload.document?.documentUrl) {
-        userContent = await processDocumentMessage(
-          payload.document.documentUrl,
-          payload.document.fileName ?? 'documento',
-          client.id,
-          payload.messageId
+        const texto  = await processDocumentMessage(
+          payload.document.documentUrl, payload.document.fileName ?? 'doc', cliente.id, payload.messageId
         );
-        mediaUrl = payload.document.documentUrl;
+        conteudo = texto;
+        tipoMsg  = 'pdf';
       }
       break;
 
     default:
-      userContent = '[mensagem recebida]';
+      conteudo = `[${payload.type} recebido]`;
   }
 
-  if (!userContent.trim()) return;
-
-  // 5. Verificar opt-out explícito na mensagem
-  if (detectOptOut(userContent)) {
-    await markClientOptOut(client.id);
-    await cancelPendingFollowups(client.id);
-    await sendTextWithTyping(
-      phone,
-      'Tudo bem! Não vou mais te enviar mensagens 💛 Se um dia quiser ver nossos produtos, é só me chamar!'
-    );
+  if (!conteudo.trim()) {
+    logger.debug({ telefone, tipo: payload.type }, 'Conteúdo vazio — ignorando');
     return;
   }
 
-  // 6. Detectar emoção
-  const emotion = await detectEmotion(userContent);
-  await updateClientEmotion(client.id, emotion);
+  // ── 7. Verificar opt-out na mensagem ──────────────────
+  if (detectarOptOut(conteudo)) {
+    logger.info({ telefone }, 'Opt-out detectado na mensagem');
+    await markClientOptOut(cliente.id);
+    await cancelarFollowupsPendentes(cliente.id, 'opt_out');
+    return; // Amanda não responde nada — silêncio total após opt-out
+  }
 
-  // 7. Salvar mensagem do usuário no banco
-  const userMessage = await saveMessage({
-    conversationId: conversation.id,
-    clientId: client.id,
-    role: 'user',
-    content: userContent,
-    messageType: payload.type === 'audio' ? 'audio' : payload.type === 'image' ? 'image' : 'text',
-    mediaUrl,
-    zapiMessageId: payload.messageId,
-    emotionDetected: emotion,
+  // ── 8. Buscar contexto histórico ──────────────────────
+  const [memoriasCurtas, memoriasRelevantes, isFollowupResponse, isRapido, isOutroDia] =
+    await Promise.all([
+      getShortTermMemory(conversa.id),
+      searchRelevantMemories(cliente.id, conteudo, 3),
+      isRespostaAFollowup(cliente.id),
+      isRespostaRapida(cliente.id),
+      isRetornoOutroDia(cliente.id),
+    ]);
+
+  // Construir contexto para análise
+  const contextoCliente = `
+Nome: ${extractFirstName(cliente.nome_preferido ?? cliente.nome ?? '')}
+Temperatura do lead: ${cliente.temperatura_lead}
+Nível: ${cliente.nivel_engajamento}
+Emoção recorrente: ${cliente.emocao_recorrente ?? 'não identificada'}
+Perfil psicológico: ${cliente.perfil_psicologico ?? 'em construção'}
+Produtos citados: ${(cliente.produtos_citados ?? []).join(', ') || 'nenhum'}
+Objeções: ${(cliente.objecoes ?? []).join(', ') || 'nenhuma'}
+`.trim();
+
+  const historicoRecente = memoriasCurtas
+    .slice(-4)
+    .map(m => `${m.direcao === 'entrada' ? 'Cliente' : 'Follow-up'}: ${m.conteudo}`)
+    .join('\n');
+
+  // ── 9. ANÁLISE COMPORTAMENTAL (núcleo silencioso) ─────
+  const analise = await analisarMensagem(conteudo, contextoCliente, historicoRecente);
+
+  // ── 10. Salvar mensagem no banco ──────────────────────
+  const mensagem = await salvarMensagem({
+    id:             uuidv4(),
+    conversaId:     conversa.id,
+    clienteId:      cliente.id,
+    tipo:           tipoMsg,
+    conteudo,
+    conteudoProcessado: conteudoProc || conteudo,
+    emocaoDetectada:    analise.emocao,
+    intencaoDetectada:  analise.intencao_principal,
+    comportamentos:     analise.comportamentos_detectados,
+    sentimentoScore:    analise.intensidade_emocional,
+    zapiMessageId:      payload.messageId,
   });
 
-  // 8. Marcar como lida
-  if (config.ZAPI_AUTO_READ) {
-    await markMessageAsRead(phone, payload.messageId);
+  // ── 11. Eventos de velocidade e padrão ───────────────
+  const eventosExtras = extrairEventosDoComportamento(
+    analise.comportamentos_detectados,
+    tipoMsg,
+    isFollowupResponse
+  );
+  if (isRapido)   eventosExtras.push('respondeu_rapido');
+  if (isOutroDia) eventosExtras.push('voltou_outro_dia');
+
+  // Verificar se já interagiu antes
+  const totalInteracoes = await queryOne<{ count: string }>(
+    'SELECT COUNT(*) as count FROM mensagens WHERE cliente_id = $1 AND direcao = $2',
+    [cliente.id, 'entrada']
+  );
+  if (parseInt(totalInteracoes?.count ?? '0') > 1) {
+    eventosExtras.push('interagiu_mais_de_uma_vez');
   }
 
-  // 9. Cancelar follow-ups pendentes (cliente respondeu)
-  await cancelPendingFollowups(client.id);
+  // ── 12. PONTUAR LEAD SCORE ────────────────────────────
+  const { score_resultante, temperatura } = await pontuarEventos(
+    cliente.id,
+    eventosExtras,
+    mensagem.id
+  );
 
-  // 10. Buscar memória curta e longa
-  const shortTermMemory = await getShortTermMemory(conversation.id);
-  const relevantMemories = await searchRelevantMemories(client.id, userContent);
-  const longTermSummary = await getClientSummaryForContext(client);
+  logger.info({
+    telefone,
+    score: score_resultante,
+    temperatura,
+    emocao: analise.emocao,
+    comportamentos: eventosExtras.length,
+  }, '📊 Lead score atualizado');
 
-  // 11. Construir contexto da IA
-  const aiContext: AIContext = {
-    clientName: extractFirstName(client.preferred_name || client.name || ''),
-    shortTermMemory,
-    longTermSummary,
-    relevantMemories: relevantMemories.map(m => m.content),
-    detectedEmotion: emotion,
-    conversationStatus: conversation.status as ConversationStatus,
-  };
+  // ── 13. REGISTRAR EVENTOS ─────────────────────────────
+  await registrarEventosDaAnalise(cliente.id, analise, conversa.id, mensagem.id);
 
-  // 12. Gerar resposta da Amanda
-  const aiResponse = await generateAmandaResponse(aiContext);
+  // ── 14. ATUALIZAR PERFIL COMPORTAMENTAL ───────────────
+  await atualizarPerfil(cliente.id, analise, tipoMsg, new Date());
 
-  // 13. Salvar mensagem da Amanda
-  const amandaMessage = await saveMessage({
-    conversationId: conversation.id,
-    clientId: client.id,
-    role: 'assistant',
-    content: aiResponse.content,
-    messageType: 'text',
-    emotionDetected: aiResponse.detectedEmotion,
-    tokensUsed: aiResponse.tokensUsed,
-  });
+  // ── 15. SALVAR MEMÓRIA ────────────────────────────────
+  // Memória curta (contexto da conversa)
+  await addMessageToShortTerm(conversa.id, mensagem);
 
-  // 14. Atualizar memória de curto prazo
-  await addMessageToShortTerm(conversation.id, userMessage);
-  await addMessageToShortTerm(conversation.id, amandaMessage);
+  // Memória longa (semântica com embeddings)
+  await salvarMemoriasSemanticas(cliente.id, conteudo, analise);
 
-  // 15. Enviar resposta (texto ou áudio)
-  const shouldSendAudio =
-    Math.random() < config.AMANDA_AUDIO_REPLY_PROBABILITY &&
-    payload.type === 'audio';
+  // Salvar interação na memória longa
+  await salvarInteracaoMemoria(cliente.id, conteudo, analise.resumo_comportamental);
 
-  if (shouldSendAudio) {
-    const audioBuffer = await generateAudioResponse(aiResponse.content);
-    await sendAudioMessage(phone, audioBuffer);
-  } else {
-    await sendTextWithTyping(phone, aiResponse.content);
-  }
+  // ── 16. ATUALIZAR CONVERSA ────────────────────────────
+  await atualizarConversa(conversa.id, conteudo, analise, score_resultante);
 
-  // 16. Salvar interação na memória longa
-  await saveInteractionAsMemory(client.id, userContent, aiResponse.content);
+  // ── 17. ATUALIZAR ÚLTIMA INTERAÇÃO DO CLIENTE ─────────
+  await updateClientLastContact(cliente.id);
 
-  // 17. Atualizar última interação
-  await updateClientLastContact(client.id);
-  await updateConversationLastMessage(conversation.id);
+  // ── 18. CANCELAR FOLLOW-UPS ATIVOS E REAGENDAR ────────
+  await cancelarFollowupsPendentes(cliente.id, 'cliente_respondeu');
 
-  // 18. Handoff automático se necessário
-  if (aiResponse.shouldTriggerHandoff) {
-    await triggerHandoffFlow(conversation.id, client.id, aiContext.longTermSummary);
-  }
+  // Determinar etapa do follow-up baseada no lead score e emoção
+  const etapaFollowup = determinarEtapaFollowup(analise, isFollowupResponse);
+  await agendarFollowup(cliente.id, conversa.id, etapaFollowup, analise);
 
-  // 19. Agendar follow-up se aplicável
-  if (aiResponse.suggestedFollowup) {
-    await scheduleFollowup(client.id, conversation.id, 1);
-  }
-
-  logger.info({ phone, tokensUsed: aiResponse.tokensUsed }, 'Mensagem processada com sucesso');
+  logger.info(
+    { telefone, score: score_resultante, temperatura, etapaFollowup },
+    '✅ Processamento silencioso concluído — follow-up agendado'
+  );
 }
 
-async function getOrCreateConversation(
-  clientId: string
-): Promise<{ id: string; status: string; handoff_active: boolean }> {
-  const existing = await queryOne<{ id: string; status: string; handoff_active: boolean }>(
-    `SELECT id, status, handoff_active FROM conversas
-     WHERE client_id = $1 AND status = 'active'
-     ORDER BY last_message_at DESC
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function obterOuCriarConversa(clienteId: string): Promise<{ id: string; status: string }> {
+  const existing = await queryOne<{ id: string; status: string }>(
+    `SELECT id, status FROM conversas
+     WHERE cliente_id = $1 AND status = 'ativa'
+     ORDER BY ultima_mensagem_em DESC NULLS LAST
      LIMIT 1`,
-    [clientId]
+    [clienteId]
   );
 
   if (existing) return existing;
 
-  const [created] = await query<{ id: string; status: string; handoff_active: boolean }>(
-    `INSERT INTO conversas (client_id) VALUES ($1) RETURNING id, status, handoff_active`,
-    [clientId]
+  const [criada] = await query<{ id: string; status: string }>(
+    `INSERT INTO conversas (cliente_id) VALUES ($1) RETURNING id, status`,
+    [clienteId]
   );
 
-  return created!;
+  logger.debug({ clienteId }, 'Nova conversa criada');
+  return criada!;
 }
 
-async function saveMessage(params: {
-  conversationId: string;
-  clientId: string;
-  role: string;
-  content: string;
-  messageType: string;
-  mediaUrl?: string;
+async function salvarMensagem(params: {
+  id: string;
+  conversaId: string;
+  clienteId: string;
+  tipo: TipoMensagem;
+  conteudo: string;
+  conteudoProcessado?: string;
+  emocaoDetectada?: string;
+  intencaoDetectada?: string;
+  comportamentos?: string[];
+  sentimentoScore?: number;
   zapiMessageId?: string;
-  emotionDetected?: string;
-  tokensUsed?: number;
 }): Promise<Mensagem> {
   const [msg] = await query<Mensagem>(
     `INSERT INTO mensagens
-       (id, conversation_id, client_id, role, content, message_type, media_url, zapi_message_id, emotion_detected, tokens_used)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (id, conversa_id, cliente_id, tipo, conteudo, conteudo_processado,
+        direcao, origem, emocao_detectada, intencao_detectada, comportamentos,
+        sentimento_score, zapi_message_id)
+     VALUES ($1, $2, $3, $4, $5, $6, 'entrada', 'cliente', $7, $8, $9, $10, $11)
+     ON CONFLICT (zapi_message_id) DO NOTHING
      RETURNING *`,
     [
-      uuidv4(),
-      params.conversationId,
-      params.clientId,
-      params.role,
-      params.content,
-      params.messageType,
-      params.mediaUrl ?? null,
+      params.id,
+      params.conversaId,
+      params.clienteId,
+      params.tipo,
+      params.conteudo,
+      params.conteudoProcessado ?? params.conteudo,
+      params.emocaoDetectada ?? null,
+      params.intencaoDetectada ?? null,
+      params.comportamentos ?? [],
+      params.sentimentoScore ?? null,
       params.zapiMessageId ?? null,
-      params.emotionDetected ?? null,
-      params.tokensUsed ?? null,
     ]
   );
+
   return msg!;
 }
 
-async function updateConversationLastMessage(conversationId: string): Promise<void> {
-  await query(
-    `UPDATE conversas
-     SET last_message_at = NOW(), message_count = message_count + 1, updated_at = NOW()
-     WHERE id = $1`,
-    [conversationId]
-  );
-}
-
-async function getClientSummaryForContext(client: {
-  id: string;
-  purchase_count: number;
-  name: string | null;
-}): Promise<string> {
-  if (client.purchase_count === 0) return '';
-  return `Cliente com ${client.purchase_count} compra(s) anterior(es).`;
-}
-
-async function triggerHandoffFlow(
-  conversationId: string,
-  clientId: string,
-  contextSummary: string
+async function atualizarConversa(
+  conversaId: string,
+  ultimaMensagem: string,
+  analise: { emocao: string; intencao_principal: string },
+  leadScore: number
 ): Promise<void> {
   await query(
-    `UPDATE conversas
-     SET status = 'handoff', handoff_active = TRUE, handoff_started_at = NOW(), updated_at = NOW()
-     WHERE id = $1`,
-    [conversationId]
+    `UPDATE conversas SET
+       ultima_mensagem      = $1,
+       ultima_mensagem_em   = NOW(),
+       quantidade_mensagens = quantidade_mensagens + 1,
+       emocao_detectada     = $2,
+       intencao_principal   = $3,
+       lead_score           = $4,
+       atualizado_em        = NOW()
+     WHERE id = $5`,
+    [
+      ultimaMensagem.slice(0, 500),
+      analise.emocao,
+      analise.intencao_principal,
+      leadScore,
+      conversaId,
+    ]
   );
+}
 
-  await query(
-    `INSERT INTO handoffs (conversation_id, client_id, context_at_handoff)
-     VALUES ($1, $2, $3)`,
-    [conversationId, clientId, contextSummary]
-  );
+async function salvarMemoriasSemanticas(
+  clienteId: string,
+  conteudo: string,
+  analise: { emocao: string; objecoes_detectadas: string[]; produtos_mencionados: string[]; tamanhos_citados: string[] }
+): Promise<void> {
+  const memorias: Array<{ conteudo: string; tipo: string }> = [];
 
-  logger.info({ conversationId }, 'Handoff ativado');
+  // Memória da interação
+  memorias.push({ conteudo, tipo: 'interacao' });
+
+  // Objeções
+  for (const objecao of analise.objecoes_detectadas) {
+    memorias.push({ conteudo: `Objeção: ${objecao}`, tipo: 'objecao' });
+  }
+
+  // Tamanhos
+  if (analise.tamanhos_citados.length > 0) {
+    memorias.push({
+      conteudo: `Tamanhos de interesse: ${analise.tamanhos_citados.join(', ')}`,
+      tipo: 'tamanho',
+    });
+  }
+
+  // Emoção significativa
+  if (analise.emocao !== 'neutra') {
+    memorias.push({
+      conteudo: `Estado emocional: ${analise.emocao}`,
+      tipo: 'emocao',
+    });
+  }
+
+  // Salvar em background (não bloquear o fluxo principal)
+  for (const mem of memorias) {
+    saveMemory(clienteId, mem.conteudo, mem.tipo as any).catch(() => null);
+  }
+}
+
+function determinarEtapaFollowup(
+  analise: { emocao: string; urgencia_detectada: boolean; probabilidade_compra: number },
+  isFollowupResponse: boolean
+): EtapaFollowup {
+  // Se respondeu follow-up, já está engajado — follow-up mais próximo
+  if (isFollowupResponse) return '20_min';
+
+  // Alta probabilidade de compra ou urgência → follow-up rápido
+  if (analise.probabilidade_compra > 0.7 || analise.urgencia_detectada) return '20_min';
+
+  // Emoção de impulso de compra → muito rápido
+  if (analise.emocao === 'impulso_compra') return '20_min';
+
+  // Empolgação → rápido
+  if (analise.emocao === 'empolgacao') return '3_horas';
+
+  // Indecisão/insegurança → dar tempo para pensar
+  if (analise.emocao === 'indecisao' || analise.emocao === 'inseguranca') return '8_horas';
+
+  // Padrão
+  return '20_min';
 }

@@ -1,101 +1,166 @@
+// ════════════════════════════════════════════════════════
+// Amanda AI — Admin Routes
+// Painel de controle do sistema silencioso
+// ════════════════════════════════════════════════════════
+
 import { Router, Request, Response } from 'express';
 import { requireAdminKey, adminRateLimit } from '../security/rate-limiter';
-import { query, queryOne } from '../database/connection';
+import { query, queryOne, checkDatabaseConnection } from '../database/connection';
 import { getInstanceStatus, getQRCode } from '../modules/whatsapp/zapi.service';
 import { getActiveHandoffs } from '../modules/handoff/handoff.service';
-import { processDueFollowups } from '../modules/followup/followup.service';
+import { processDueFollowups, cancelarFollowupsPendentes } from '../modules/followup/followup.service';
 import { updateProductEmbedding } from '../modules/memory/vector.service';
+import { rankingLeadsMaisQuentes, buscarScore } from '../modules/leadScore/leadScore.service';
 import { invalidatePromptsCache } from '../modules/ai/prompts.loader';
-import { checkDatabaseConnection } from '../database/connection';
 import { logger } from '../utils/logger';
 
 const router = Router();
-
 router.use(adminRateLimit, requireAdminKey);
 
-// ── Status ──
+// ── Status do sistema ────────────────────────────────────
 router.get('/status', async (_req: Request, res: Response) => {
   const [dbOk, waStatus] = await Promise.all([
     checkDatabaseConnection(),
     getInstanceStatus(),
   ]);
 
+  const stats = await queryOne<{
+    total_clientes: string;
+    leads_quentes: string;
+    followups_pendentes: string;
+    handoffs_ativos: string;
+  }>(`
+    SELECT
+      (SELECT COUNT(*) FROM clientes WHERE opt_out = FALSE)::text AS total_clientes,
+      (SELECT COUNT(*) FROM clientes WHERE temperatura_lead >= 51 AND opt_out = FALSE)::text AS leads_quentes,
+      (SELECT COUNT(*) FROM followups WHERE status = 'pendente')::text AS followups_pendentes,
+      (SELECT COUNT(*) FROM handoffs WHERE status = 'ativo')::text AS handoffs_ativos
+  `);
+
   res.json({
     status: 'online',
+    mode: 'silent_behavioral_ai',
     database: dbOk,
     whatsapp: waStatus,
+    stats,
     timestamp: new Date().toISOString(),
   });
 });
 
-// ── WhatsApp QR Code ──
+// ── WhatsApp ─────────────────────────────────────────────
 router.get('/qrcode', async (_req: Request, res: Response) => {
   const qr = await getQRCode();
   res.json({ qrcode: qr });
 });
 
-// ── Clientes ──
+// ── Clientes ─────────────────────────────────────────────
 router.get('/clientes', async (req: Request, res: Response) => {
-  const page = parseInt(req.query['page'] as string ?? '1');
-  const limit = parseInt(req.query['limit'] as string ?? '20');
+  const page   = parseInt(req.query['page'] as string ?? '1');
+  const limit  = parseInt(req.query['limit'] as string ?? '20');
   const offset = (page - 1) * limit;
 
-  const clients = await query(
-    'SELECT * FROM clientes ORDER BY last_contact_at DESC NULLS LAST LIMIT $1 OFFSET $2',
+  const clientes = await query(
+    `SELECT id, nome, telefone, nivel_engajamento, temperatura_lead,
+            ultima_interacao, etapa_funil, opt_out, emocao_recorrente
+     FROM clientes
+     ORDER BY ultima_interacao DESC NULLS LAST
+     LIMIT $1 OFFSET $2`,
     [limit, offset]
   );
-  res.json({ data: clients, page, limit });
+  res.json({ data: clientes, page, limit });
 });
 
 router.get('/clientes/:id', async (req: Request, res: Response) => {
-  const client = await queryOne('SELECT * FROM clientes WHERE id = $1', [req.params['id']]);
-  if (!client) { res.status(404).json({ error: 'Cliente não encontrado' }); return; }
-  res.json(client);
+  const id = req.params['id'] as string;
+  const cliente = await queryOne('SELECT * FROM clientes WHERE id = $1', [id]);
+  if (!cliente) { res.status(404).json({ error: 'Cliente não encontrado' }); return; }
+  res.json(cliente);
 });
 
-// ── Conversas ──
+router.get('/clientes/:id/score', async (req: Request, res: Response) => {
+  const id = req.params['id'] as string;
+  const dados = await buscarScore(id);
+  res.json(dados);
+});
+
+router.get('/clientes/:id/perfil', async (req: Request, res: Response) => {
+  const id = req.params['id'] as string;
+  const perfil = await queryOne(
+    'SELECT * FROM customer_behavior_profile WHERE cliente_id = $1',
+    [id]
+  );
+  if (!perfil) { res.status(404).json({ error: 'Perfil não encontrado' }); return; }
+  res.json(perfil);
+});
+
+router.get('/clientes/:id/eventos', async (req: Request, res: Response) => {
+  const id = req.params['id'] as string;
+  const eventos = await query(
+    `SELECT tipo_evento, dados, pontos_score, criado_em
+     FROM eventos WHERE cliente_id = $1 ORDER BY criado_em DESC LIMIT 50`,
+    [id]
+  );
+  res.json({ data: eventos });
+});
+
+router.get('/clientes/:id/emocoes', async (req: Request, res: Response) => {
+  const id = req.params['id'] as string;
+  const emocoes = await query(
+    `SELECT emocao, intensidade, confianca, contexto, criado_em
+     FROM emocao_analise WHERE cliente_id = $1 ORDER BY criado_em DESC LIMIT 30`,
+    [id]
+  );
+  res.json({ data: emocoes });
+});
+
+// ── Lead Score ranking ───────────────────────────────────
+router.get('/leads/ranking', async (_req: Request, res: Response) => {
+  const ranking = await rankingLeadsMaisQuentes(30);
+  res.json({ data: ranking });
+});
+
+// ── Conversas ────────────────────────────────────────────
 router.get('/conversas', async (req: Request, res: Response) => {
-  const clientId = req.query['client_id'];
-  const status = req.query['status'];
+  const clienteId = req.query['cliente_id'];
+  const status    = req.query['status'];
 
   let sql = 'SELECT * FROM conversas WHERE 1=1';
   const params: unknown[] = [];
 
-  if (clientId) {
-    params.push(clientId);
-    sql += ` AND client_id = $${params.length}`;
-  }
-  if (status) {
-    params.push(status);
-    sql += ` AND status = $${params.length}`;
-  }
+  if (clienteId) { params.push(clienteId); sql += ` AND cliente_id = $${params.length}`; }
+  if (status)    { params.push(status);    sql += ` AND status = $${params.length}`; }
 
-  sql += ' ORDER BY last_message_at DESC LIMIT 50';
+  sql += ' ORDER BY ultima_mensagem_em DESC NULLS LAST LIMIT 50';
 
-  const conversations = await query(sql, params);
-  res.json({ data: conversations });
+  const conversas = await query(sql, params);
+  res.json({ data: conversas });
 });
 
-// ── Mensagens ──
-router.get('/mensagens/:conversationId', async (req: Request, res: Response) => {
-  const messages = await query(
-    'SELECT * FROM mensagens WHERE conversation_id = $1 ORDER BY created_at ASC',
-    [req.params['conversationId']]
+router.get('/mensagens/:conversaId', async (req: Request, res: Response) => {
+  const id = req.params['conversaId'] as string;
+  const mensagens = await query(
+    `SELECT * FROM mensagens WHERE conversa_id = $1 ORDER BY criado_em ASC`,
+    [id]
   );
-  res.json({ data: messages });
+  res.json({ data: mensagens });
 });
 
-// ── Handoffs ──
+// ── Handoffs ─────────────────────────────────────────────
 router.get('/handoffs/active', async (_req: Request, res: Response) => {
   const handoffs = await getActiveHandoffs();
   res.json({ data: handoffs });
 });
 
-// ── Follow-ups ──
+// ── Follow-ups ───────────────────────────────────────────
 router.get('/followups', async (req: Request, res: Response) => {
-  const status = req.query['status'] ?? 'pending';
+  const status = req.query['status'] ?? 'pendente';
   const followups = await query(
-    'SELECT * FROM followups WHERE status = $1 ORDER BY scheduled_at ASC LIMIT 50',
+    `SELECT f.*, c.telefone, c.nome
+     FROM followups f
+     JOIN clientes c ON c.id = f.cliente_id
+     WHERE f.status = $1
+     ORDER BY f.agendado_para ASC
+     LIMIT 50`,
     [status]
   );
   res.json({ data: followups });
@@ -106,52 +171,94 @@ router.post('/followups/process', async (_req: Request, res: Response) => {
   res.json({ message: 'Follow-ups processados' });
 });
 
-// ── Produtos ──
+router.delete('/followups/cliente/:clienteId', async (req: Request, res: Response) => {
+  const id = req.params['clienteId'] as string;
+  await cancelarFollowupsPendentes(id, 'admin_cancelou');
+  res.json({ message: 'Follow-ups cancelados' });
+});
+
+// ── Produtos ─────────────────────────────────────────────
 router.get('/produtos', async (_req: Request, res: Response) => {
-  const products = await query('SELECT * FROM produtos WHERE active = TRUE ORDER BY name');
-  res.json({ data: products });
+  const produtos = await query('SELECT * FROM produtos WHERE ativo = TRUE ORDER BY nome');
+  res.json({ data: produtos });
 });
 
 router.post('/produtos', async (req: Request, res: Response) => {
-  const { name, description, price, category, sizes, colors, images, sku } = req.body;
-  const [product] = await query(
-    `INSERT INTO produtos (name, description, price, category, sizes, colors, images, sku)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-    [name, description, price, category, sizes ?? [], colors ?? [], images ?? [], sku ?? null]
+  const { nome, descricao_curta, preco, categoria_id, tamanhos, cores_secundarias, url_imagem_principal } = req.body;
+  const [produto] = await query(
+    `INSERT INTO produtos (nome, descricao_curta, preco, categoria_id, tamanhos, cores_secundarias, url_imagem_principal)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [nome, descricao_curta, preco, categoria_id ?? null, tamanhos ?? [], cores_secundarias ?? [], url_imagem_principal ?? null]
   );
-  await updateProductEmbedding((product as { id: string }).id);
-  res.status(201).json(product);
+  if (produto) {
+    await updateProductEmbedding((produto as { id: string }).id).catch(() => null);
+  }
+  res.status(201).json(produto);
 });
 
 router.put('/produtos/:id', async (req: Request, res: Response) => {
-  const { name, description, price, category, sizes, colors, images, stock_quantity, active } = req.body;
-  const [updated] = await query(
-    `UPDATE produtos SET name=$1, description=$2, price=$3, category=$4, sizes=$5, colors=$6,
-     images=$7, stock_quantity=$8, active=$9, updated_at=NOW() WHERE id=$10 RETURNING *`,
-    [name, description, price, category, sizes, colors, images, stock_quantity, active, req.params['id']]
+  const pid = req.params['id'] as string;
+  const { nome, descricao_curta, preco, tamanhos, estoque, ativo } = req.body;
+  const [atualizado] = await query(
+    `UPDATE produtos SET nome=$1, descricao_curta=$2, preco=$3,
+     tamanhos=$4, estoque=$5, ativo=$6, atualizado_em=NOW()
+     WHERE id=$7 RETURNING *`,
+    [nome, descricao_curta, preco, tamanhos, estoque, ativo, pid]
   );
-  if (updated) await updateProductEmbedding(req.params['id']!);
-  res.json(updated);
+  if (atualizado) await updateProductEmbedding(pid).catch(() => null);
+  res.json(atualizado);
 });
 
-// ── Analytics ──
+// ── Analytics ────────────────────────────────────────────
 router.get('/analytics/overview', async (_req: Request, res: Response) => {
-  const [clients, conversations, messages, followups] = await Promise.all([
-    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM clientes'),
-    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM conversas WHERE status = $1', ['active']),
-    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM mensagens WHERE created_at > NOW() - INTERVAL \'24 hours\''),
-    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM followups WHERE status = $1', ['pending']),
+  const [clientes, conversas, mensagens, followups, leadsQuentes] = await Promise.all([
+    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM clientes WHERE opt_out = FALSE'),
+    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM conversas WHERE status = $1', ['ativa']),
+    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM mensagens WHERE criado_em > NOW() - INTERVAL \'24 hours\' AND direcao = \'entrada\''),
+    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM followups WHERE status = $1', ['pendente']),
+    queryOne<{ count: string }>('SELECT COUNT(*) as count FROM clientes WHERE temperatura_lead >= 51 AND opt_out = FALSE'),
   ]);
 
   res.json({
-    totalClients: parseInt(clients?.count ?? '0'),
-    activeConversations: parseInt(conversations?.count ?? '0'),
-    messagesLast24h: parseInt(messages?.count ?? '0'),
-    pendingFollowups: parseInt(followups?.count ?? '0'),
+    totalClientes:         parseInt(clientes?.count ?? '0'),
+    conversasAtivas:       parseInt(conversas?.count ?? '0'),
+    mensagens24h:          parseInt(mensagens?.count ?? '0'),
+    followupsPendentes:    parseInt(followups?.count ?? '0'),
+    leadsQuentes:          parseInt(leadsQuentes?.count ?? '0'),
   });
 });
 
-// ── Configurações ──
+router.get('/analytics/emocoes', async (_req: Request, res: Response) => {
+  const emocoes = await query(
+    `SELECT emocao, COUNT(*) as total, AVG(intensidade) as intensidade_media
+     FROM emocao_analise
+     WHERE criado_em > NOW() - INTERVAL '7 days'
+     GROUP BY emocao
+     ORDER BY total DESC`
+  );
+  res.json({ data: emocoes });
+});
+
+router.get('/analytics/score-distribuicao', async (_req: Request, res: Response) => {
+  const dist = await query(`
+    SELECT
+      CASE
+        WHEN temperatura_lead = 0     THEN 'frio (0)'
+        WHEN temperatura_lead <= 20   THEN 'frio (1-20)'
+        WHEN temperatura_lead <= 50   THEN 'morno (21-50)'
+        WHEN temperatura_lead <= 80   THEN 'quente (51-80)'
+        ELSE 'muito_quente (81+)'
+      END AS faixa,
+      COUNT(*) AS total
+    FROM clientes
+    WHERE opt_out = FALSE
+    GROUP BY faixa
+    ORDER BY total DESC
+  `);
+  res.json({ data: dist });
+});
+
+// ── Configurações ─────────────────────────────────────────
 router.post('/prompts/reload', (_req: Request, res: Response) => {
   invalidatePromptsCache();
   res.json({ message: 'Cache de prompts invalidado' });

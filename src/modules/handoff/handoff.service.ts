@@ -1,63 +1,60 @@
+// ════════════════════════════════════════════════════════
+// Amanda AI — Handoff Service
+// Gerencia transição humano ↔ IA
+// ════════════════════════════════════════════════════════
+
 import { query, queryOne } from '../../database/connection';
 import { ZApiWebhookPayload } from '../../types';
-import { handoffKeywords, config } from '../../config';
+import { handoffKeywords } from '../../config';
 import { logger } from '../../utils/logger';
-import { sendTextWithTyping } from '../whatsapp/zapi.service';
 
-const REACTIVATE_KEYWORDS = ['liberar', 'voltar', 'ia', 'retomar', 'amanda'];
+const REATIVAR_KEYWORDS = ['liberar', 'voltar', 'ia', 'retomar', 'amanda'];
 
 export async function checkAndHandleHandoff(
-  conversationId: string,
-  clientId: string,
-  phone: string,
+  conversaId: string,
+  clienteId: string,
+  telefone: string,
   payload: ZApiWebhookPayload
 ): Promise<boolean> {
-  const conversation = await queryOne<{
+  const conversa = await queryOne<{
     id: string;
-    handoff_active: boolean;
-    handoff_started_at: Date | null;
+    handoff_ativo: boolean;
+    handoff_iniciado_em: Date | null;
   }>(
-    'SELECT id, handoff_active, handoff_started_at FROM conversas WHERE id = $1',
-    [conversationId]
+    'SELECT id, handoff_ativo, handoff_iniciado_em FROM conversas WHERE id = $1',
+    [conversaId]
   );
 
-  if (!conversation) return false;
+  if (!conversa) return false;
 
-  const messageText = payload.text?.message?.toLowerCase() ?? '';
+  const texto = (payload.text?.message ?? '').toLowerCase();
 
-  // Checar se mensagem é de humano ativando handoff
+  // Mensagem do agente humano ativando/desativando handoff
   if (payload.fromMe) {
-    if (handoffKeywords.some(kw => messageText.includes(kw))) {
-      await activateHandoff(conversationId, clientId, messageText);
+    if (handoffKeywords.some(kw => texto.includes(kw))) {
+      await ativarHandoff(conversaId, clienteId, texto);
       return true;
     }
-
-    if (REACTIVATE_KEYWORDS.some(kw => messageText.includes(kw))) {
-      await deactivateHandoff(conversationId);
+    if (REATIVAR_KEYWORDS.some(kw => texto.includes(kw))) {
+      await desativarHandoff(conversaId);
       return true;
     }
-
-    if (conversation.handoff_active) {
+    if (conversa.handoff_ativo) {
       await query(
-        'UPDATE conversas SET handoff_started_at = NOW() WHERE id = $1',
-        [conversationId]
+        'UPDATE conversas SET handoff_iniciado_em = NOW() WHERE id = $1',
+        [conversaId]
       );
       return true;
     }
   }
 
-  // Se handoff ativo, verificar reativação automática por timeout (1 hora)
-  if (conversation.handoff_active) {
-    const startedAt = conversation.handoff_started_at;
-    if (startedAt) {
-      const elapsed = Date.now() - new Date(startedAt).getTime();
-      const oneHour = 60 * 60 * 1000;
-
-      if (elapsed > oneHour) {
-        await deactivateHandoff(conversationId);
-        logger.info({ conversationId }, 'Handoff reativado automaticamente por timeout');
-        return false;
-      }
+  // Handoff ativo: verificar timeout automático (1 hora)
+  if (conversa.handoff_ativo && conversa.handoff_iniciado_em) {
+    const elapsed = Date.now() - new Date(conversa.handoff_iniciado_em).getTime();
+    if (elapsed > 60 * 60 * 1000) {
+      await desativarHandoff(conversaId);
+      logger.info({ conversaId }, 'Handoff reativado automaticamente por timeout');
+      return false;
     }
     return true;
   }
@@ -65,61 +62,57 @@ export async function checkAndHandleHandoff(
   return false;
 }
 
-async function activateHandoff(
-  conversationId: string,
-  clientId: string,
-  activatedBy: string
-): Promise<void> {
+async function ativarHandoff(conversaId: string, clienteId: string, ativadoPor: string): Promise<void> {
   await query(
     `UPDATE conversas
-     SET status = 'handoff', handoff_active = TRUE, handoff_started_at = NOW(),
-         handoff_by = $1, updated_at = NOW()
+     SET status = 'handoff', handoff_ativo = TRUE,
+         handoff_iniciado_em = NOW(), handoff_por = $1, atualizado_em = NOW()
      WHERE id = $2`,
-    [activatedBy, conversationId]
+    [ativadoPor, conversaId]
   );
 
-  const existing = await queryOne<{ id: string }>(
-    `SELECT id FROM handoffs WHERE conversation_id = $1 AND status = 'active'`,
-    [conversationId]
+  const existente = await queryOne<{ id: string }>(
+    `SELECT id FROM handoffs WHERE conversa_id = $1 AND status = 'ativo'`,
+    [conversaId]
   );
 
-  if (!existing) {
+  if (!existente) {
     await query(
-      `INSERT INTO handoffs (conversation_id, client_id, started_by)
-       VALUES ($1, $2, $3)`,
-      [conversationId, clientId, 'human_agent']
+      `INSERT INTO handoffs (cliente_id, conversa_id, assumido_por, status)
+       VALUES ($1, $2, 'agente_humano', 'ativo')`,
+      [clienteId, conversaId]
     );
   }
 
-  logger.info({ conversationId }, 'Handoff humano ativado');
+  logger.info({ conversaId }, 'Handoff humano ativado');
 }
 
-async function deactivateHandoff(conversationId: string): Promise<void> {
+async function desativarHandoff(conversaId: string): Promise<void> {
   await query(
     `UPDATE conversas
-     SET status = 'active', handoff_active = FALSE, handoff_started_at = NULL,
-         handoff_by = NULL, updated_at = NOW()
+     SET status = 'ativa', handoff_ativo = FALSE,
+         handoff_iniciado_em = NULL, handoff_por = NULL, atualizado_em = NOW()
      WHERE id = $1`,
-    [conversationId]
+    [conversaId]
   );
 
   await query(
     `UPDATE handoffs
-     SET status = 'resolved', resolved_at = NOW(), resolved_by = 'auto_timeout'
-     WHERE conversation_id = $1 AND status = 'active'`,
-    [conversationId]
+     SET status = 'resolvido', resolvido_em = NOW(), resolvido_por = 'auto_timeout'
+     WHERE conversa_id = $1 AND status = 'ativo'`,
+    [conversaId]
   );
 
-  logger.info({ conversationId }, 'Handoff encerrado — Amanda reativada');
+  logger.info({ conversaId }, 'Handoff encerrado — Amanda silenciosa reativada');
 }
 
 export async function getActiveHandoffs(): Promise<Record<string, unknown>[]> {
   return query(
-    `SELECT h.*, c.phone, cl.name
+    `SELECT h.*, c.telefone, cl.nome
      FROM handoffs h
-     JOIN conversas c ON c.id = h.conversation_id
-     JOIN clientes cl ON cl.id = h.client_id
-     WHERE h.status = 'active'
-     ORDER BY h.started_at DESC`
+     JOIN conversas c ON c.id = h.conversa_id
+     JOIN clientes cl ON cl.id = h.cliente_id
+     WHERE h.status = 'ativo'
+     ORDER BY h.criado_em DESC`
   );
 }

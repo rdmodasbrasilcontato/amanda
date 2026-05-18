@@ -13,7 +13,7 @@ export function randomFloat(min: number, max: number): number {
 }
 
 export function pickRandom<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
+  return arr[Math.floor(Math.random() * arr.length)]!;
 }
 
 export function normalizePhone(phone: string): string {
@@ -35,12 +35,15 @@ export function extractFirstName(fullName: string | null | undefined): string {
 }
 
 export function isBusinessHours(): boolean {
-  const now = new Date();
   const tz = config.TIMEZONE;
-  const brtNow = new Date(now.toLocaleString('en-US', { timeZone: tz }));
-  const hour = brtNow.getHours();
-  const day = brtNow.getDay();
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));
+  const hour = now.getHours();
+  const day  = now.getDay();
   return day >= 1 && day <= 6 && hour >= 9 && hour < 20;
+}
+
+export function addMinutes(date: Date, minutes: number): Date {
+  return new Date(date.getTime() + minutes * 60 * 1000);
 }
 
 export function addHours(date: Date, hours: number): Date {
@@ -74,15 +77,14 @@ export async function retryWithBackoff<T>(
   maxRetries = 3,
   baseDelayMs = 1000
 ): Promise<T> {
-  let lastError: Error | unknown;
+  let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await fn();
     } catch (err) {
       lastError = err;
       if (attempt < maxRetries) {
-        const delay = baseDelayMs * Math.pow(2, attempt);
-        await sleep(delay);
+        await sleep(baseDelayMs * Math.pow(2, attempt));
       }
     }
   }
@@ -91,8 +93,7 @@ export async function retryWithBackoff<T>(
 
 export function generateTypingDelay(messageLength: number): number {
   const base = config.AMANDA_TYPING_MIN_MS;
-  const max = config.AMANDA_TYPING_MAX_MS;
-  const perChar = 30;
-  const calculated = base + Math.min(messageLength * perChar, max - base);
-  return randomBetween(calculated * 0.8, calculated);
+  const max  = config.AMANDA_TYPING_MAX_MS;
+  const calc = base + Math.min(messageLength * 30, max - base);
+  return randomBetween(Math.floor(calc * 0.8), calc);
 }

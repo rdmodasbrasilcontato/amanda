@@ -1,13 +1,15 @@
+// ════════════════════════════════════════════════════════
+// Amanda AI — Short-Term Memory (contexto da conversa)
+// ════════════════════════════════════════════════════════
+
 import { query } from '../../database/connection';
 import { Mensagem } from '../../types';
 import { redisGet, redisSet } from '../../cache/redis.client';
-import { logger } from '../../utils/logger';
 
-const SHORT_TERM_LIMIT = 30;
+const SHORT_TERM_LIMIT = 20;
 
-export async function getShortTermMemory(conversationId: string): Promise<Mensagem[]> {
-  const cacheKey = `stm:${conversationId}`;
-
+export async function getShortTermMemory(conversaId: string): Promise<Mensagem[]> {
+  const cacheKey = `stm:${conversaId}`;
   const cached = await redisGet(cacheKey);
   if (cached) {
     return JSON.parse(cached) as Mensagem[];
@@ -15,35 +17,29 @@ export async function getShortTermMemory(conversationId: string): Promise<Mensag
 
   const rows = await query<Mensagem>(
     `SELECT * FROM mensagens
-     WHERE conversation_id = $1
-       AND role IN ('user', 'assistant')
-     ORDER BY created_at DESC
+     WHERE conversa_id = $1
+       AND direcao IN ('entrada', 'saida')
+     ORDER BY criado_em DESC
      LIMIT $2`,
-    [conversationId, SHORT_TERM_LIMIT]
+    [conversaId, SHORT_TERM_LIMIT]
   );
 
-  const messages = rows.reverse();
-
-  await redisSet(cacheKey, JSON.stringify(messages), 3600);
-  return messages;
+  const mensagens = rows.reverse();
+  await redisSet(cacheKey, JSON.stringify(mensagens), 3600);
+  return mensagens;
 }
 
-export async function addMessageToShortTerm(
-  conversationId: string,
-  message: Mensagem
-): Promise<void> {
-  const cacheKey = `stm:${conversationId}`;
+export async function addMessageToShortTerm(conversaId: string, mensagem: Mensagem): Promise<void> {
+  const cacheKey = `stm:${conversaId}`;
   const cached = await redisGet(cacheKey);
-  const messages: Mensagem[] = cached ? JSON.parse(cached) : [];
+  const mensagens: Mensagem[] = cached ? JSON.parse(cached) : [];
 
-  messages.push(message);
-  if (messages.length > SHORT_TERM_LIMIT) {
-    messages.shift();
-  }
+  mensagens.push(mensagem);
+  if (mensagens.length > SHORT_TERM_LIMIT) mensagens.shift();
 
-  await redisSet(cacheKey, JSON.stringify(messages), 3600);
+  await redisSet(cacheKey, JSON.stringify(mensagens), 3600);
 }
 
-export async function clearShortTermCache(conversationId: string): Promise<void> {
-  await redisSet(`stm:${conversationId}`, JSON.stringify([]), 1);
+export async function clearShortTermCache(conversaId: string): Promise<void> {
+  await redisSet(`stm:${conversaId}`, JSON.stringify([]), 1);
 }

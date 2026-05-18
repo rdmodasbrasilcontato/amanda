@@ -1,57 +1,57 @@
+// ════════════════════════════════════════════════════════
+// Amanda AI — Vector Memory Service (pgvector)
+// ════════════════════════════════════════════════════════
+
 import { query, queryOne } from '../../database/connection';
 import { generateEmbedding } from '../ai/openai.service';
-import { MemoriaVetorial, VectorSearchResult } from '../../types';
+import { VectorSearchResult } from '../../types';
 import { logger } from '../../utils/logger';
 
 export async function saveMemory(
-  clientId: string,
-  content: string,
-  memoryType: MemoriaVetorial['memory_type'],
-  sourceMessageId?: string
+  clienteId: string,
+  conteudo: string,
+  tipoMemoria: string,
+  _mensagemId?: string
 ): Promise<void> {
   try {
-    const embedding = await generateEmbedding(content);
+    const embedding = await generateEmbedding(conteudo);
     const vectorStr = `[${embedding.join(',')}]`;
 
     await query(
-      `INSERT INTO memoria_vetorial
-         (client_id, content, embedding, memory_type, source_message_id)
-       VALUES ($1, $2, $3::vector, $4, $5)`,
-      [clientId, content, vectorStr, memoryType, sourceMessageId ?? null]
+      `INSERT INTO memoria_longa
+         (cliente_id, tipo_memoria, conteudo, embedding)
+       VALUES ($1, $2, $3, $4::vector)`,
+      [clienteId, tipoMemoria, conteudo, vectorStr]
     );
-
-    logger.debug({ clientId, memoryType }, 'Memória vetorial salva');
   } catch (err) {
-    logger.error({ err, clientId }, 'Erro ao salvar memória vetorial');
+    logger.error({ err, clienteId }, 'Erro ao salvar memória vetorial');
   }
 }
 
 export async function searchRelevantMemories(
-  clientId: string,
-  query_text: string,
-  limit = 5,
+  clienteId: string,
+  queryText: string,
+  limite = 5,
   threshold = 0.72
 ): Promise<VectorSearchResult[]> {
   try {
-    const embedding = await generateEmbedding(query_text);
+    const embedding = await generateEmbedding(queryText);
     const vectorStr = `[${embedding.join(',')}]`;
 
-    const rows = await query<VectorSearchResult>(
+    return await query<VectorSearchResult>(
       `SELECT * FROM buscar_memoria_cliente($1, $2::vector, $3, $4)`,
-      [clientId, vectorStr, limit, threshold]
+      [clienteId, vectorStr, limite, threshold]
     );
-
-    return rows;
   } catch (err) {
-    logger.error({ err, clientId }, 'Erro na busca vetorial de memória');
+    logger.error({ err, clienteId }, 'Erro na busca vetorial');
     return [];
   }
 }
 
 export async function searchProducts(
   queryText: string,
-  limit = 5,
-  threshold = 0.68
+  limite = 5,
+  threshold = 0.65
 ): Promise<Record<string, unknown>[]> {
   try {
     const embedding = await generateEmbedding(queryText);
@@ -59,7 +59,7 @@ export async function searchProducts(
 
     return await query(
       `SELECT * FROM buscar_produtos_semantico($1::vector, $2, $3)`,
-      [vectorStr, limit, threshold]
+      [vectorStr, limite, threshold]
     );
   } catch (err) {
     logger.error({ err }, 'Erro na busca semântica de produtos');
@@ -67,16 +67,19 @@ export async function searchProducts(
   }
 }
 
-export async function updateProductEmbedding(productId: string): Promise<void> {
-  const product = await queryOne<{ name: string; description: string; category: string }>(
-    'SELECT name, description, category FROM produtos WHERE id = $1',
-    [productId]
+export async function updateProductEmbedding(produtoId: string): Promise<void> {
+  const produto = await queryOne<{ nome: string; descricao_curta: string | null }>(
+    'SELECT nome, descricao_curta FROM produtos WHERE id = $1',
+    [produtoId]
   );
-  if (!product) return;
+  if (!produto) return;
 
-  const text = `${product.name}. ${product.description ?? ''}. Categoria: ${product.category}`;
-  const embedding = await generateEmbedding(text);
+  const texto = `${produto.nome}. ${produto.descricao_curta ?? ''}`;
+  const embedding = await generateEmbedding(texto);
   const vectorStr = `[${embedding.join(',')}]`;
 
-  await query('UPDATE produtos SET embedding = $1::vector WHERE id = $2', [vectorStr, productId]);
+  await query(
+    'UPDATE produtos SET embedding = $1::vector WHERE id = $2',
+    [vectorStr, produtoId]
+  );
 }

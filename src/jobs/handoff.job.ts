@@ -2,33 +2,32 @@ import cron from 'node-cron';
 import { query } from '../database/connection';
 import { logger } from '../utils/logger';
 
-// Reativar handoffs que ficaram sem resposta humana por mais de 1 hora
 export function startHandoffTimeoutJob(): void {
   cron.schedule('*/15 * * * *', async () => {
     try {
-      const expired = await query<{ id: string }>(
+      const expirados = await query<{ id: string }>(
         `SELECT id FROM conversas
-         WHERE handoff_active = TRUE
-           AND handoff_started_at < NOW() - INTERVAL '1 hour'`
+         WHERE handoff_ativo = TRUE
+           AND handoff_iniciado_em < NOW() - INTERVAL '1 hour'`
       );
 
-      for (const conv of expired) {
+      for (const conv of expirados) {
         await query(
           `UPDATE conversas
-           SET status = 'active', handoff_active = FALSE,
-               handoff_started_at = NULL, handoff_by = NULL, updated_at = NOW()
+           SET status = 'ativa', handoff_ativo = FALSE,
+               handoff_iniciado_em = NULL, handoff_por = NULL, atualizado_em = NOW()
            WHERE id = $1`,
           [conv.id]
         );
 
         await query(
           `UPDATE handoffs
-           SET status = 'resolved', resolved_at = NOW(), resolved_by = 'auto_timeout'
-           WHERE conversation_id = $1 AND status = 'active'`,
+           SET status = 'resolvido', resolvido_em = NOW(), resolvido_por = 'auto_timeout'
+           WHERE conversa_id = $1 AND status = 'ativo'`,
           [conv.id]
         );
 
-        logger.info({ conversationId: conv.id }, 'Handoff expirado — Amanda reativada');
+        logger.info({ conversaId: conv.id }, 'Handoff expirado — Amanda silenciosa reativada');
       }
     } catch (err) {
       logger.error({ err }, 'Erro no job de handoff timeout');

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { config } from '../../config';
-import { transcribeAudio, analyzeImage } from '../ai/openai.service';
+import { transcribeAudio } from '../ai/openai.service';
 import { uploadToStorage } from '../../config/supabase';
 import { query } from '../../database/connection';
 import { logger } from '../../utils/logger';
@@ -40,10 +40,10 @@ export async function processAudioMessage(
     );
 
     await query(
-      `INSERT INTO midias (client_id, message_id, media_type, original_url, storage_path, public_url, mime_type, transcription)
-       VALUES ($1, $2, 'audio', $3, $4, $5, $6, $7)
-       ON CONFLICT DO NOTHING`,
-      [clientId, messageId, audioUrl, storagePath, publicUrl, mimeType, transcription]
+      `INSERT INTO audios_recebidos
+         (cliente_id, mensagem_id, audio_url, storage_path, transcricao, mime_type)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [clientId, messageId, audioUrl, storagePath, transcription, mimeType]
     );
 
     logger.info({ clientId }, 'Áudio transcrito com sucesso');
@@ -58,10 +58,11 @@ export async function processImageMessage(
   imageUrl: string,
   caption: string,
   clientId: string,
-  messageId: string
+  messageId: string,
+  descricaoIa?: string
 ): Promise<string> {
   try {
-    const analysis = await analyzeImage(imageUrl);
+    const analysis = descricaoIa ?? '';
 
     const buffer = await downloadMedia(imageUrl);
     if (buffer) {
@@ -74,10 +75,10 @@ export async function processImageMessage(
       );
 
       await query(
-        `INSERT INTO midias (client_id, message_id, media_type, original_url, storage_path, public_url, mime_type, ai_analysis)
-         VALUES ($1, $2, 'image', $3, $4, $5, 'image/jpeg', $6)
-         ON CONFLICT DO NOTHING`,
-        [clientId, messageId, imageUrl, storagePath, publicUrl, analysis]
+        `INSERT INTO imagens_recebidas
+           (cliente_id, mensagem_id, imagem_url, storage_path, descricao_ia)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [clientId, messageId, imageUrl, storagePath, analysis || null]
       );
     }
 
@@ -107,10 +108,10 @@ export async function processDocumentMessage(
       );
 
       await query(
-        `INSERT INTO midias (client_id, message_id, media_type, original_url, storage_path, mime_type)
-         VALUES ($1, $2, 'document', $3, $4, 'application/pdf')
-         ON CONFLICT DO NOTHING`,
-        [clientId, messageId, documentUrl, storagePath]
+        `INSERT INTO documentos_recebidos
+           (cliente_id, mensagem_id, arquivo_url, storage_path, nome_arquivo, tipo_documento)
+         VALUES ($1, $2, $3, $4, $5, 'pdf')`,
+        [clientId, messageId, documentUrl, storagePath, fileName]
       );
     }
     return `[documento recebido: ${fileName}]`;
