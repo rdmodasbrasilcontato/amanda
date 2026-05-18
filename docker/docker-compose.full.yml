@@ -1,0 +1,104 @@
+version: '3.9'
+
+# ════════════════════════════════════════════════════════
+# Amanda AI — Stack Completa com Nginx + SSL
+# Uso: docker compose -f docker/docker-compose.full.yml up -d
+# Requer: domínio apontado para este servidor + SSL ativado via scripts/enable-ssl.sh
+# ════════════════════════════════════════════════════════
+
+networks:
+  amanda-net:
+    driver: bridge
+
+volumes:
+  redis-data:
+  letsencrypt:
+  nginx-logs:
+
+services:
+
+  # ── Aplicação principal ──────────────────────────────
+  amanda:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: amanda-app
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - NODE_ENV=production
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - amanda-net
+    volumes:
+      - ../logs:/app/logs
+      - ../backups:/app/backups
+      - ../src/prompts:/app/src/prompts:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ── Redis ────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: amanda-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    networks:
+      - amanda-net
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ── Nginx (Proxy Reverso + SSL) ──────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: amanda-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      amanda:
+        condition: service_healthy
+    networks:
+      - amanda-net
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - nginx-logs:/var/log/nginx
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
