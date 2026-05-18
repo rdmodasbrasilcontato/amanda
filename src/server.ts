@@ -1,4 +1,5 @@
 import 'dotenv/config';
+process.env.TZ = 'America/Sao_Paulo';
 import app from './app';
 import { config } from './config';
 import { logger } from './utils/logger';
