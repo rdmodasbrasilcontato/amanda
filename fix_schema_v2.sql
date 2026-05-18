@@ -205,3 +205,6 @@ CREATE INDEX IF NOT EXISTS idx_memoria_longa_cliente ON memoria_longa(cliente_id
 CREATE INDEX IF NOT EXISTS idx_lead_scores_cliente ON lead_scores(cliente_id);
 
 SELECT 'Schema v2 aplicado com sucesso!' AS resultado;
+
+-- ── Expandir coluna telefone para suportar números mais longos ──
+ALTER TABLE clientes ALTER COLUMN telefone TYPE VARCHAR(50);

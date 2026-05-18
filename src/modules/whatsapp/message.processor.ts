@@ -44,8 +44,13 @@ export async function processIncomingMessage(payload: ZApiWebhookPayload): Promi
   // Ignorar mensagens do próprio sistema, grupos e status
   if (payload.fromMe || payload.isGroupMsg) return;
 
+  // Ignorar grupos/broadcasts (phone com hífen = ID de grupo no Z-API)
+  if (!payload.phone || payload.phone.includes('-') || payload.phone.includes('@')) return;
+
   const telefone = normalizePhone(payload.phone);
-  const nome     = payload.senderName || undefined;
+  if (!telefone || telefone.length > 20) return; // ignorar IDs inválidos
+
+  const nome = payload.senderName || undefined;
 
   logger.info({ telefone, tipo: payload.type, messageId: payload.messageId }, '📩 Mensagem recebida');
 
