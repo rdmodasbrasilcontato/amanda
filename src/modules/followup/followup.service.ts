@@ -117,7 +117,7 @@ export async function cancelarFollowupsPendentes(
 ): Promise<void> {
   await query(
     `UPDATE followups
-     SET status = 'cancelado', motivo_cancelamento = $1, atualizado_em = NOW()
+     SET status = 'cancelado', cancelado_por = $1, atualizado_em = NOW()
      WHERE cliente_id = $2 AND status = 'pendente'`,
     [motivo, clienteId]
   );
@@ -183,7 +183,7 @@ async function processarFollowup(followup: {
     [followup.cliente_id]
   );
   if (parseInt(hoje?.count ?? '0') >= 3) {
-    await marcarFollowup(followup.id, 'pausado', 'limite_diario');
+    await marcarFollowup(followup.id, 'cancelado', 'limite_diario');
     return;
   }
 
@@ -339,7 +339,7 @@ async function marcarFollowup(
   await query(
     `UPDATE followups SET
        status               = $1,
-       motivo_cancelamento  = COALESCE($2, motivo_cancelamento),
+       cancelado_por        = COALESCE($2, cancelado_por),
        mensagem_gerada      = COALESCE($3, mensagem_gerada),
        enviado_em           = CASE WHEN $1 = 'enviado' THEN NOW() ELSE enviado_em END,
        tentativas           = tentativas + 1,
