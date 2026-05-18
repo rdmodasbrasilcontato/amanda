@@ -6,6 +6,7 @@ import { checkDatabaseConnection } from './database/connection';
 import { getRedisClient } from './cache/redis.client';
 import { startFollowupJob } from './jobs/followup.job';
 import { startHandoffTimeoutJob } from './jobs/handoff.job';
+import { startScoreDecayJob } from './jobs/score-decay.job';
 
 async function bootstrap(): Promise<void> {
   logger.info(`🚀 Iniciando ${config.APP_NAME} v${config.APP_VERSION}...`);
@@ -29,6 +30,7 @@ async function bootstrap(): Promise<void> {
   // Iniciar jobs
   startFollowupJob();
   startHandoffTimeoutJob();
+  startScoreDecayJob();
   logger.info('✅ Jobs de background iniciados');
 
   // Iniciar servidor

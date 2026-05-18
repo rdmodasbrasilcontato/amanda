@@ -4,7 +4,7 @@
 // ════════════════════════════════════════════════════════
 
 import { query, queryOne } from '../../database/connection';
-import { AnaliseComportamental, CustomerBehaviorProfile } from '../../types';
+import { AnaliseComportamental, CustomerBehaviorProfile, EtapaFunil } from '../../types';
 import { logger } from '../../utils/logger';
 
 // ── Obter ou criar perfil comportamental ─────────────────
@@ -145,19 +145,76 @@ export async function atualizarPerfil(
     ]
   );
 
-  // Atualizar perfil psicológico no cliente também
-  if (analise.perfil_atualizado) {
-    await query(
-      `UPDATE clientes
-       SET perfil_psicologico = $1,
-           emocao_recorrente  = $2,
-           atualizado_em      = NOW()
-       WHERE id = $3`,
-      [analise.perfil_atualizado, analise.emocao, clienteId]
-    );
+  // Atualizar perfil psicológico, horário preferido e etapa do funil no cliente
+  const novaEtapaFunil = await calcularEtapaFunil(clienteId, analise);
+
+  await query(
+    `UPDATE clientes
+     SET perfil_psicologico = COALESCE($1, perfil_psicologico),
+         emocao_recorrente  = $2,
+         horario_preferido  = $3,
+         etapa_funil        = $4,
+         atualizado_em      = NOW()
+     WHERE id = $5`,
+    [
+      analise.perfil_atualizado || null,
+      analise.emocao,
+      horarioPreferido,
+      novaEtapaFunil,
+      clienteId,
+    ]
+  );
+
+  logger.debug({ clienteId, etapaFunil: novaEtapaFunil, horarioPreferido }, 'Perfil comportamental atualizado');
+}
+
+// ── Calcular etapa do funil baseado em score, intenção e histórico ──
+export async function calcularEtapaFunil(
+  clienteId: string,
+  analise: AnaliseComportamental
+): Promise<EtapaFunil> {
+  const cliente = await queryOne<{
+    temperatura_lead: number;
+    ultima_compra: Date | null;
+    total_pedidos: number;
+    etapa_funil: EtapaFunil;
+  }>(
+    'SELECT temperatura_lead, ultima_compra, total_pedidos, etapa_funil FROM clientes WHERE id = $1',
+    [clienteId]
+  );
+
+  if (!cliente) return 'topo';
+
+  // Já comprou antes
+  if (cliente.ultima_compra && cliente.total_pedidos > 0) {
+    // Cliente voltando a engajar com intenção → recompra
+    if (analise.comportamentos_detectados.includes('intencao_compra') ||
+        analise.probabilidade_compra >= 0.6) {
+      return 'recompra';
+    }
+    return 'cliente';
   }
 
-  logger.debug({ clienteId }, 'Perfil comportamental atualizado');
+  // Intenção clara de compra ou urgência alta → fundo de funil
+  if (analise.comportamentos_detectados.includes('intencao_compra') ||
+      analise.probabilidade_compra >= 0.7 ||
+      analise.nivel_urgencia === 'critica' ||
+      cliente.temperatura_lead >= 51) {
+    return 'fundo';
+  }
+
+  // Demonstrou interesse concreto (preço, tamanho, foto, disponibilidade) → meio
+  const sinaisInteresse: string[] = [
+    'perguntou_preco', 'perguntou_tamanho', 'pediu_fotos',
+    'perguntou_disponibilidade', 'visualizou_categorias',
+  ];
+  const temInteresse = analise.comportamentos_detectados.some(c => sinaisInteresse.includes(c));
+
+  if (temInteresse || cliente.temperatura_lead >= 21) {
+    return 'meio';
+  }
+
+  return 'topo';
 }
 
 // ── Construir contexto de perfil para o follow-up ────────

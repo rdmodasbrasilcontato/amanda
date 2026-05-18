@@ -206,6 +206,17 @@ Objeções: ${(cliente.objecoes ?? []).join(', ') || 'nenhuma'}
     eventosExtras.push('interagiu_mais_de_uma_vez');
   }
 
+  // Detectar `permaneceu_ativo`: 3+ mensagens nos últimos 10 minutos
+  const recentes = await queryOne<{ count: string }>(
+    `SELECT COUNT(*) as count FROM mensagens
+     WHERE cliente_id = $1 AND direcao = 'entrada'
+       AND criado_em > NOW() - INTERVAL '10 minutes'`,
+    [cliente.id]
+  );
+  if (parseInt(recentes?.count ?? '0') >= 3) {
+    eventosExtras.push('permaneceu_ativo');
+  }
+
   // ── 12. PONTUAR LEAD SCORE ────────────────────────────
   const { score_resultante, temperatura } = await pontuarEventos(
     cliente.id,
