@@ -122,19 +122,23 @@ export async function registrarEventosDaAnalise(
   }
 
   // Salvar análise emocional no histórico
-  await q(
-    `INSERT INTO emocao_analise
-       (cliente_id, mensagem_id, emocao, intensidade, confianca, contexto)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [
-      clienteId,
-      mensagemId ?? null,
-      analise.emocao,
-      analise.intensidade_emocional,
-      analise.confianca_emocional,
-      analise.resumo_comportamental,
-    ]
-  );
+  try {
+    await q(
+      `INSERT INTO emocao_analise
+         (cliente_id, mensagem_id, emocao, intensidade, confianca, contexto)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        clienteId,
+        mensagemId ?? null,
+        analise.emocao,
+        analise.intensidade_emocional,
+        analise.confianca_emocional,
+        analise.resumo_comportamental,
+      ]
+    );
+  } catch (err) {
+    logger.error({ err, clienteId }, 'Erro ao salvar emocao_analise');
+  }
 }
 
 // ── Buscar histórico de eventos do cliente ───────────────
