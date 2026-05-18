@@ -1,0 +1,67 @@
+# ════════════════════════════════════════════════════════
+# Amanda AI — Docker Compose
+# Sobe: app + redis (opcional)
+# ════════════════════════════════════════════════════════
+
+version: '3.9'
+
+services:
+
+  # ── Amanda AI ─────────────────────────────────────────
+  amanda:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: amanda-ai
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - amanda-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ── Redis (cache + debounce) ───────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: amanda-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save ""
+    networks:
+      - amanda-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+networks:
+  amanda-net:
+    driver: bridge
+
+volumes:
+  logs:
