@@ -40,7 +40,7 @@ export async function processAudioMessage(
     );
 
     await query(
-      `INSERT INTO audios_recebidos
+      `INSERT INTO áudios_recebidos
          (cliente_id, mensagem_id, audio_url, storage_path, transcricao, mime_type)
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [clientId, messageId, audioUrl, storagePath, transcription, mimeType]
