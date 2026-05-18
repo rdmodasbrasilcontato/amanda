@@ -2,12 +2,15 @@ import { Pool, PoolClient } from 'pg';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
+// Prefer pooler URL (more reliable from external IPs); strip sslmode param since we handle SSL in options
+const rawUrl = (config.DATABASE_POOL_URL ?? config.DATABASE_URL).replace(/[?&]sslmode=[^&]*/g, '').replace(/\?$/, '');
+
 const pool = new Pool({
-  connectionString: config.DATABASE_URL,
+  connectionString: rawUrl,
   max: config.DATABASE_MAX_CONNECTIONS,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
-  ssl: config.DATABASE_SSL ? { rejectUnauthorized: false } : false,
+  connectionTimeoutMillis: 15000,
+  ssl: { rejectUnauthorized: false },
 });
 
 pool.on('error', (err) => {
