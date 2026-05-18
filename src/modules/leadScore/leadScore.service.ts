@@ -72,9 +72,8 @@ export async function pontuar(
     [scoreNovo, nivelEngajamento, clienteId]
   );
 
-  // Registrar no histórico (nomes de colunas conforme a tabela real)
   await query(
-    `INSERT INTO lead_scores
+    `INSERT INTO "pontuações_líderes"
        (cliente_id, mensagem_id, tipo_evento, pontos, score_resultante)
      VALUES ($1, $2, $3, $4, $5)`,
     [clienteId, mensagemId ?? null, evento, pontos, scoreNovo]
@@ -117,7 +116,7 @@ export async function buscarScore(clienteId: string): Promise<{
 
   const historico = await query<{ tipo_evento: string; pontos: number; criado_em: Date }>(
     `SELECT tipo_evento, pontos, criado_em
-     FROM lead_scores
+     FROM "pontuações_líderes"
      WHERE cliente_id = $1
      ORDER BY criado_em DESC
      LIMIT 20`,
