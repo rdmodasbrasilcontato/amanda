@@ -72,12 +72,12 @@ export async function pontuar(
     [scoreNovo, nivelEngajamento, clienteId]
   );
 
-  // Registrar no histórico
+  // Registrar no histórico (nomes de colunas conforme a tabela real)
   await query(
     `INSERT INTO lead_scores
-       (cliente_id, mensagem_id, evento, pontos_adicionados, score_resultante, temperatura)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [clienteId, mensagemId ?? null, evento, pontos, scoreNovo, temperatura]
+       (cliente_id, mensagem_id, tipo_evento, pontos, score_resultante)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [clienteId, mensagemId ?? null, evento, pontos, scoreNovo]
   );
 
   logger.debug({ clienteId, evento, pontos, scoreNovo, temperatura }, 'Lead score atualizado');
@@ -115,8 +115,8 @@ export async function buscarScore(clienteId: string): Promise<{
   const score = cliente?.temperatura_lead ?? 0;
   const temperatura = calcularTemperatura(score);
 
-  const historico = await query<{ evento: string; pontos_adicionados: number; criado_em: Date }>(
-    `SELECT evento, pontos_adicionados, criado_em
+  const historico = await query<{ tipo_evento: string; pontos: number; criado_em: Date }>(
+    `SELECT tipo_evento, pontos, criado_em
      FROM lead_scores
      WHERE cliente_id = $1
      ORDER BY criado_em DESC
@@ -128,8 +128,8 @@ export async function buscarScore(clienteId: string): Promise<{
     score,
     temperatura,
     historico: historico.map(h => ({
-      evento: h.evento,
-      pontos: h.pontos_adicionados,
+      evento: h.tipo_evento,
+      pontos: h.pontos,
       criado_em: h.criado_em,
     })),
   };
