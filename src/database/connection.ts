@@ -2,11 +2,17 @@ import { Pool, PoolClient } from 'pg';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
-// Prefer pooler URL (more reliable from external IPs); strip sslmode param since we handle SSL in options
-const rawUrl = (config.DATABASE_POOL_URL ?? config.DATABASE_URL).replace(/[?&]sslmode=[^&]*/g, '').replace(/\?$/, '');
+// Build connection config from individual parts to avoid URL parsing issues
+const poolerHost = 'aws-1-sa-east-1.pooler.supabase.com';
+const poolerUser = `postgres.${new URL(config.SUPABASE_URL).hostname.split('.')[0]}`;
+const dbPassword = config.DATABASE_URL.match(/:([^@]+)@/)?.[1] ?? '';
 
 const pool = new Pool({
-  connectionString: rawUrl,
+  host: poolerHost,
+  port: 6543,
+  database: 'postgres',
+  user: poolerUser,
+  password: dbPassword,
   max: config.DATABASE_MAX_CONNECTIONS,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 15000,
