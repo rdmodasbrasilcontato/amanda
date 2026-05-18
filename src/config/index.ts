@@ -27,6 +27,7 @@ const envSchema = z.object({
 
   // Database
   DATABASE_URL: z.string().min(1),
+  DB_PASSWORD: z.string().min(1),
   DATABASE_POOL_URL: z.string().optional(),
   DATABASE_MAX_CONNECTIONS: z.coerce.number().default(10),
   DATABASE_SSL: z.coerce.boolean().default(true),

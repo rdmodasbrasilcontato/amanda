@@ -2,17 +2,14 @@ import { Pool, PoolClient } from 'pg';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
-// Build connection config from individual parts to avoid URL parsing issues
-const poolerHost = 'aws-1-sa-east-1.pooler.supabase.com';
-const poolerUser = `postgres.${new URL(config.SUPABASE_URL).hostname.split('.')[0]}`;
-const dbPassword = config.DATABASE_URL.match(/:([^@]+)@/)?.[1] ?? '';
+const projectRef = new URL(config.SUPABASE_URL).hostname.split('.')[0];
 
 const pool = new Pool({
-  host: poolerHost,
+  host: 'aws-1-sa-east-1.pooler.supabase.com',
   port: 6543,
   database: 'postgres',
-  user: poolerUser,
-  password: dbPassword,
+  user: `postgres.${projectRef}`,
+  password: config.DB_PASSWORD,
   max: config.DATABASE_MAX_CONNECTIONS,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 15000,
