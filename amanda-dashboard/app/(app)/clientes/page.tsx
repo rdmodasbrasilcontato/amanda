@@ -1,15 +1,15 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   useReactTable, getCoreRowModel, getSortedRowModel, getFilteredRowModel,
   getPaginationRowModel, flexRender,
   type ColumnDef, type SortingState, type ColumnFiltersState,
 } from '@tanstack/react-table';
-import { ArrowUpDown, ArrowUp, ArrowDown, Search, Download, UserPlus, Filter } from 'lucide-react';
+import { ArrowUpDown, ArrowUp, ArrowDown, Search, Download, UserPlus, Filter, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { clients, type Client, type ClientStatus } from '@/lib/mock-data';
+import { type Client, type ClientStatus, clients as mockClients } from '@/lib/mock-data';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,17 +17,17 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { cn, formatCurrency, timeAgo } from '@/lib/utils';
 
-const statusConfig: Record<ClientStatus, { label: string; variant: any }> = {
-  novo:       { label: 'Novo',         variant: 'default' },
-  aguardando: { label: 'Aguardando',   variant: 'warning' },
-  frio:       { label: 'Frio',         variant: 'cold' },
-  morno:      { label: 'Morno',        variant: 'warm' },
-  quente:     { label: 'Quente',       variant: 'hot' },
-  ativo:      { label: 'Ativo',        variant: 'success' },
-  'pos-venda':{ label: 'Pós-venda',    variant: 'info' },
-  vip:        { label: 'VIP',          variant: 'default' },
-  pausado:    { label: 'Pausado',      variant: 'secondary' },
-  encerrado:  { label: 'Encerrado',    variant: 'secondary' },
+const statusConfig: Record<string, { label: string; variant: any }> = {
+  novo:        { label: 'Novo',       variant: 'default' },
+  aguardando:  { label: 'Aguardando', variant: 'warning' },
+  frio:        { label: 'Frio',       variant: 'cold' },
+  morno:       { label: 'Morno',      variant: 'warm' },
+  quente:      { label: 'Quente',     variant: 'hot' },
+  ativo:       { label: 'Ativo',      variant: 'success' },
+  'pos-venda': { label: 'Pós-venda',  variant: 'info' },
+  vip:         { label: 'VIP',        variant: 'default' },
+  pausado:     { label: 'Pausado',    variant: 'secondary' },
+  encerrado:   { label: 'Encerrado',  variant: 'secondary' },
 };
 
 const emotionEmoji: Record<string, string> = {
@@ -35,11 +35,57 @@ const emotionEmoji: Record<string, string> = {
   satisfeito: '😌', urgente: '⚡', neutro: '😐',
 };
 
+const PAGE_LIMIT = 50;
+
 export default function ClientesPage() {
   const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+
+  // API state
+  const [apiClientes, setApiClientes] = useState<Client[]>([]);
+  const [apiTotal, setApiTotal] = useState(0);
+  const [apiPage, setApiPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [useRealData, setUseRealData] = useState(false);
+
+  const fetchClientes = useCallback(async (page: number, search: string) => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: String(PAGE_LIMIT) });
+      if (search) params.set('search', search);
+      const res = await fetch(`/api/clientes?${params}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.clientes && json.clientes.length > 0) {
+          setApiClientes(json.clientes);
+          setApiTotal(json.total ?? json.clientes.length);
+          setUseRealData(true);
+        }
+      }
+    } catch {
+      // silently fall back to mock
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Busca com debounce
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setApiPage(1);
+      fetchClientes(1, searchInput);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [searchInput, fetchClientes]);
+
+  useEffect(() => {
+    fetchClientes(apiPage, searchInput);
+  }, [apiPage]);
+
+  const data = useRealData ? apiClientes : mockClients;
 
   const columns = useMemo<ColumnDef<Client>[]>(() => [
     {
@@ -51,7 +97,7 @@ export default function ClientesPage() {
         return (
           <div className="flex items-center gap-3 min-w-[180px]">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary/20 to-fuchsia-500/20 text-xs font-semibold">
-              {c.nome.split(' ').map(n => n[0]).slice(0, 2).join('')}
+              {(c.nome ?? '?').split(' ').map((n: string) => n[0]).slice(0, 2).join('')}
             </div>
             <div>
               <div className="font-medium text-sm leading-none mb-0.5">{c.nome}</div>
@@ -60,13 +106,6 @@ export default function ClientesPage() {
           </div>
         );
       },
-    },
-    {
-      accessorKey: 'cidade',
-      header: 'Cidade',
-      cell: ({ row }) => (
-        <span className="text-sm">{row.original.cidade}, {row.original.estado}</span>
-      ),
     },
     {
       accessorKey: 'leadScore',
@@ -155,16 +194,16 @@ export default function ClientesPage() {
       accessorKey: 'status',
       header: 'Status',
       cell: ({ row }) => {
-        const s = statusConfig[row.original.status];
+        const s = statusConfig[row.original.status] ?? statusConfig.ativo;
         return <Badge variant={s.variant} className="text-[10px]">{s.label}</Badge>;
       },
     },
   ], []);
 
   const table = useReactTable({
-    data: clients,
+    data,
     columns,
-    state: { sorting, columnFilters, globalFilter },
+    state: { sorting, columnFilters, globalFilter: useRealData ? '' : globalFilter },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: setGlobalFilter,
@@ -173,15 +212,22 @@ export default function ClientesPage() {
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     initialState: { pagination: { pageSize: 20 } },
+    manualPagination: useRealData,
+    pageCount: useRealData ? Math.ceil(apiTotal / PAGE_LIMIT) : undefined,
   });
+
+  const totalDisplay = useRealData ? apiTotal : table.getFilteredRowModel().rows.length;
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="Clientes"
-        description={`${table.getFilteredRowModel().rows.length} clientes encontrados`}
+        description={`${totalDisplay} clientes encontrados${useRealData ? ' (Supabase)' : ' (demo)'}`}
         actions={
           <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => fetchClientes(apiPage, searchInput)} disabled={loading}>
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+            </Button>
             <Button variant="outline" size="sm"><Download className="h-3.5 w-3.5" /> Exportar</Button>
             <Button variant="glow" size="sm"><UserPlus className="h-3.5 w-3.5" /> Novo Cliente</Button>
           </div>
@@ -193,9 +239,12 @@ export default function ClientesPage() {
         <div className="relative flex-1 min-w-[240px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Buscar por nome, telefone, cidade..."
-            value={globalFilter}
-            onChange={e => setGlobalFilter(e.target.value)}
+            placeholder="Buscar por nome ou telefone..."
+            value={useRealData ? searchInput : globalFilter}
+            onChange={e => {
+              if (useRealData) setSearchInput(e.target.value);
+              else setGlobalFilter(e.target.value);
+            }}
             className="pl-9"
           />
         </div>
@@ -238,7 +287,9 @@ export default function ClientesPage() {
               ))}
             </thead>
             <tbody>
-              {table.getRowModel().rows.map((row, i) => (
+              {loading && data.length === 0 ? (
+                <tr><td colSpan={11} className="px-4 py-12 text-center text-sm text-muted-foreground">Carregando clientes...</td></tr>
+              ) : table.getRowModel().rows.map((row, i) => (
                 <motion.tr
                   key={row.id}
                   initial={{ opacity: 0, x: -4 }}
@@ -261,11 +312,21 @@ export default function ClientesPage() {
         {/* Pagination */}
         <div className="flex items-center justify-between px-4 py-3 border-t border-border">
           <span className="text-xs text-muted-foreground">
-            Página {table.getState().pagination.pageIndex + 1} de {table.getPageCount()} · {table.getFilteredRowModel().rows.length} clientes
+            {useRealData
+              ? `Página ${apiPage} de ${Math.ceil(apiTotal / PAGE_LIMIT)} · ${apiTotal} clientes`
+              : `Página ${table.getState().pagination.pageIndex + 1} de ${table.getPageCount()} · ${totalDisplay} clientes`}
           </span>
           <div className="flex gap-1.5">
-            <Button variant="outline" size="sm" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>Anterior</Button>
-            <Button variant="outline" size="sm" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>Próximo</Button>
+            <Button
+              variant="outline" size="sm"
+              onClick={() => useRealData ? setApiPage(p => Math.max(1, p - 1)) : table.previousPage()}
+              disabled={useRealData ? apiPage <= 1 : !table.getCanPreviousPage()}
+            >Anterior</Button>
+            <Button
+              variant="outline" size="sm"
+              onClick={() => useRealData ? setApiPage(p => p + 1) : table.nextPage()}
+              disabled={useRealData ? apiPage >= Math.ceil(apiTotal / PAGE_LIMIT) : !table.getCanNextPage()}
+            >Próximo</Button>
           </div>
         </div>
       </motion.div>
