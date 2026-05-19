@@ -2,14 +2,8 @@ import { Pool, PoolClient } from 'pg';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
-const projectRef = new URL(config.SUPABASE_URL).hostname.split('.')[0];
-
 const pool = new Pool({
-  host: 'aws-0-sa-east-1.pooler.supabase.com',
-  port: 6543,
-  database: 'postgres',
-  user: `postgres.${projectRef}`,
-  password: config.DB_PASSWORD,
+  connectionString: config.DATABASE_POOL_URL ?? config.DATABASE_URL,
   max: config.DATABASE_MAX_CONNECTIONS,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 15000,
