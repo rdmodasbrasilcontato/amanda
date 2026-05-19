@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 const projectRef = new URL(config.SUPABASE_URL).hostname.split('.')[0];
 
 const pool = new Pool({
-  host: 'aws-1-sa-east-1.pooler.supabase.com',
+  host: 'aws-0-sa-east-1.pooler.supabase.com',
   port: 6543,
   database: 'postgres',
   user: `postgres.${projectRef}`,
