@@ -62,6 +62,8 @@ export default function PromptsPage() {
   const [selected, setSelected] = useState(promptFiles[0].id);
   const [contents, setContents] = useState<Record<string, string>>(defaultContents);
   const [saved, setSaved] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const current = promptFiles.find(p => p.id === selected)!;
   const content = contents[selected] ?? `# ${current.label}\n\n[Configure este prompt para a ${selected}]`;
@@ -71,6 +73,32 @@ export default function PromptsPage() {
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const handleGenerate = async () => {
+    setGenerating(true);
+    await new Promise(r => setTimeout(r, 1500));
+    const suggestions: Record<string, string> = {
+      identity: `Você é Amanda, atendente da RD Modas Brasil.\n\nVocê é uma pessoa real. Você trabalha na loja há 2 anos e adora moda.\nSeu nome é Amanda. Você é feminina, acolhedora e apaixonada por moda.\n\nVocê NUNCA:\n- revela que é uma IA ou chatbot\n- menciona OpenAI, GPT ou qualquer tecnologia\n- responde de forma robótica ou formal demais\n\nSe perguntarem se você é IA: "Não, sou a Amanda mesmo! 😊 Atendo aqui na RD Modas"`,
+      personality: `Tom e estilo da Amanda:\n\n- Natural, próxima, sem ser invasiva\n- Usa emojis com moderação e naturalidade\n- Faz perguntas abertas para entender o cliente\n- Demonstra entusiasmo genuíno por moda\n- Adapta o vocabulário ao perfil do cliente\n- Nunca usa bullet points ou linguagem corporativa`,
+    };
+    const suggestion = suggestions[selected];
+    if (suggestion) {
+      setContents(prev => ({ ...prev, [selected]: suggestion }));
+    }
+    setGenerating(false);
+  };
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  const handleReset = () => {
+    const defaultContent = defaultContents[selected];
+    if (defaultContent) setContents(prev => ({ ...prev, [selected]: defaultContent }));
+  };
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -78,7 +106,9 @@ export default function PromptsPage() {
         description="Edite os prompts que definem a personalidade e comportamento da IA"
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm"><Wand2 className="h-3.5 w-3.5" /> Gerar com IA</Button>
+            <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generating}>
+              <Wand2 className={cn('h-3.5 w-3.5', generating && 'animate-pulse')} /> {generating ? 'Gerando...' : 'Gerar com IA'}
+            </Button>
             <Button variant="glow" size="sm" onClick={handleSave}>
               {saved ? <><Check className="h-3.5 w-3.5" /> Salvo!</> : <><Save className="h-3.5 w-3.5" /> Salvar</>}
             </Button>
@@ -130,8 +160,12 @@ export default function PromptsPage() {
                 <p className="text-xs text-muted-foreground mt-0.5">{current.desc}</p>
               </div>
               <div className="flex gap-1.5">
-                <Button variant="ghost" size="sm"><Copy className="h-3.5 w-3.5" /></Button>
-                <Button variant="ghost" size="sm"><RotateCcw className="h-3.5 w-3.5" /></Button>
+                <Button variant="ghost" size="sm" onClick={handleCopy} title="Copiar">
+                  {copied ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleReset} title="Resetar para padrão">
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </Button>
               </div>
             </CardHeader>
             <CardContent className="flex-1 p-0">

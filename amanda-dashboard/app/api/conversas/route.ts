@@ -2,64 +2,75 @@ import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 
 export async function GET(req: Request) {
-  const sb = createServerClient();
-  const { searchParams } = new URL(req.url);
-  const clienteId = searchParams.get('cliente_id') ?? '';
-  const limit = parseInt(searchParams.get('limit') ?? '20');
+  try {
+    const sb = createServerClient();
+    const { searchParams } = new URL(req.url);
+    const clienteId = searchParams.get('cliente_id') ?? '';
+    const limit = parseInt(searchParams.get('limit') ?? '20');
 
-  // Lista de conversas com último cliente
-  const { data: conversas, error } = await sb
-    .from('conversas')
-    .select(`
-      id, status, last_message_at, message_count, handoff_active,
-      clientes ( id, name, preferred_name, phone, emotion_profile, tags )
-    `)
-    .order('last_message_at', { ascending: false })
-    .limit(limit);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  // Se solicitado cliente específico, busca mensagens
-  let mensagens: any[] = [];
-  if (clienteId) {
-    const { data: conv } = await sb
+    const { data: conversas, error } = await sb
       .from('conversas')
-      .select('id')
-      .eq('client_id', clienteId)
-      .order('last_message_at', { ascending: false })
-      .limit(1)
-      .single();
+      .select(`
+        id, status, ultima_mensagem_em, quantidade_mensagens, handoff_ativo,
+        emocao_detectada, lead_score, intencao_principal, criado_em,
+        clientes ( id, nome, nome_preferido, telefone, emocao_recorrente, nivel_engajamento )
+      `)
+      .order('ultima_mensagem_em', { ascending: false, nullsFirst: false })
+      .limit(limit);
 
-    if (conv) {
-      const { data: msgs } = await sb
-        .from('mensagens')
-        .select('id, role, content, emotion_detected, created_at, message_type')
-        .eq('conversation_id', conv.id)
-        .order('created_at', { ascending: true })
-        .limit(100);
-      mensagens = msgs ?? [];
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    let mensagens: any[] = [];
+    if (clienteId) {
+      const { data: conv } = await sb
+        .from('conversas')
+        .select('id')
+        .eq('cliente_id', clienteId)
+        .order('ultima_mensagem_em', { ascending: false, nullsFirst: false })
+        .limit(1)
+        .single();
+
+      if (conv) {
+        const { data: msgs } = await sb
+          .from('mensagens')
+          .select('id, direcao, conteudo, emocao_detectada, criado_em, tipo')
+          .eq('conversa_id', conv.id)
+          .order('criado_em', { ascending: true })
+          .limit(100);
+        mensagens = (msgs ?? []).map((m: any) => ({
+          id: m.id,
+          role: m.direcao === 'entrada' ? 'user' : 'assistant',
+          content: m.conteudo,
+          emotion_detected: m.emocao_detectada,
+          created_at: m.criado_em,
+          message_type: m.tipo,
+        }));
+      }
+    }
+
+    const lista = (conversas ?? []).map((c: any) => {
+      const cliente = Array.isArray(c.clientes) ? c.clientes[0] : c.clientes;
+      return {
+        id: c.id,
+        clienteId: cliente?.id,
+        clienteNome: cliente?.nome_preferido ?? cliente?.nome ?? cliente?.telefone ?? '—',
+        clienteTelefone: cliente?.telefone ?? '—',
+        status: c.status,
+        lastMessageAt: c.ultima_mensagem_em,
+        messageCount: c.quantidade_mensagens ?? 0,
+        handoffActive: c.handoff_ativo ?? false,
+        emocaoDominante: c.emocao_detectada ?? cliente?.emocao_recorrente ?? 'neutro',
+        leadScore: c.lead_score ?? 0,
+        intencao: c.intencao_principal ?? '—',
+        tags: cliente?.nivel_engajamento ? [cliente.nivel_engajamento] : [],
+      };
+    });
+
+    return NextResponse.json({ conversas: lista, mensagens });
+  } catch (err: any) {
+    console.error('Conversas API error:', err);
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
-
-  const lista = (conversas ?? []).map((c: any) => {
-    const cliente = Array.isArray(c.clientes) ? c.clientes[0] : c.clientes;
-    const ep = (cliente?.emotion_profile ?? {}) as Record<string, number>;
-    const emocao = Object.entries(ep).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'neutro';
-    return {
-      id: c.id,
-      clienteId: cliente?.id,
-      clienteNome: cliente?.name ?? cliente?.preferred_name ?? cliente?.phone ?? '—',
-      clienteTelefone: cliente?.phone ?? '—',
-      status: c.status,
-      lastMessageAt: c.last_message_at,
-      messageCount: c.message_count ?? 0,
-      handoffActive: c.handoff_active ?? false,
-      emocaoDominante: emocao,
-      tags: cliente?.tags ?? [],
-    };
-  });
-
-  return NextResponse.json({ conversas: lista, mensagens });
 }

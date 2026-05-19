@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Plus, Copy, Play, Pause, Settings, Thermometer, Zap, MessageSquare, Bot } from 'lucide-react';
+import { Plus, Copy, Check, Play, Pause, Settings, Thermometer, Zap, MessageSquare, Bot } from 'lucide-react';
 import { agents, type Agent } from '@/lib/mock-data';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,15 @@ const providerLabel: Record<Agent['provider'], string> = {
 
 function AgentCard({ agent, index }: { agent: Agent; index: number }) {
   const [active, setActive] = useState(agent.status === 'ativo');
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    const text = `Agent: ${agent.nome}\nModel: ${agent.modelo}\nPersonalidade: ${agent.personalidade}`;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -105,7 +114,9 @@ function AgentCard({ agent, index }: { agent: Agent; index: number }) {
           >
             {active ? <><Pause className="h-3.5 w-3.5" /> Pausar</> : <><Play className="h-3.5 w-3.5" /> Ativar</>}
           </Button>
-          <Button variant="outline" size="sm"><Copy className="h-3.5 w-3.5" /></Button>
+          <Button variant="outline" size="sm" onClick={handleCopy} title="Copiar configuração">
+            {copied ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+          </Button>
           <Button variant="outline" size="sm"><Settings className="h-3.5 w-3.5" /></Button>
         </div>
       </div>

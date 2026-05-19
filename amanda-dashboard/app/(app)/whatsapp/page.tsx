@@ -1,90 +1,13 @@
 'use client';
 
-import { useState } from 'react';
-import { motion } from 'framer-motion';
-import { Smartphone, RefreshCw, Plus, Wifi, WifiOff, QrCode, MessageSquare, Bot } from 'lucide-react';
-import { whatsappInstances, type WhatsappInstance } from '@/lib/mock-data';
+import { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Smartphone, RefreshCw, Plus, Wifi, WifiOff, QrCode, MessageSquare, Bot, X, Loader2 } from 'lucide-react';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { cn, formatNumber, timeAgo } from '@/lib/utils';
-
-const providerColors: Record<WhatsappInstance['provider'], string> = {
-  'z-api':     'from-green-500/20 to-emerald-500/10 text-green-400',
-  'evolution': 'from-blue-500/20 to-cyan-500/10 text-blue-400',
-  'meta':      'from-blue-600/20 to-indigo-500/10 text-blue-500',
-  'ultramsg':  'from-purple-500/20 to-violet-500/10 text-purple-400',
-};
-
-const providerLabel: Record<WhatsappInstance['provider'], string> = {
-  'z-api': 'Z-API', 'evolution': 'Evolution API', 'meta': 'Meta API', 'ultramsg': 'UltraMsg',
-};
-
-function InstanceCard({ inst, index }: { inst: WhatsappInstance; index: number }) {
-  const connected = inst.status === 'conectado';
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.08 }}
-      className="relative overflow-hidden rounded-2xl border border-border glass hover:border-primary/30 transition-all"
-    >
-      <div className={cn('absolute top-0 left-0 right-0 h-1 bg-gradient-to-r', connected ? 'from-success to-emerald-400' : 'from-destructive to-red-400')} />
-      <div className="p-5 pt-6">
-        {/* Header */}
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className={cn('flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br', providerColors[inst.provider])}>
-              <Smartphone className="h-6 w-6" />
-            </div>
-            <div>
-              <h3 className="font-bold text-sm">{inst.nome}</h3>
-              <div className="font-mono text-xs text-muted-foreground">{inst.numero}</div>
-            </div>
-          </div>
-          <Badge variant={connected ? 'success' : 'destructive'} className="flex items-center gap-1">
-            {connected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-            {connected ? 'Conectado' : 'Offline'}
-          </Badge>
-        </div>
-
-        {/* Provider badge */}
-        <div className={cn('inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-md bg-gradient-to-r mb-4', providerColors[inst.provider])}>
-          {providerLabel[inst.provider]}
-        </div>
-
-        {/* Stats */}
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          <div className="rounded-lg bg-accent/40 p-3 text-center">
-            <MessageSquare className="h-4 w-4 text-muted-foreground mx-auto mb-1" />
-            <div className="font-bold text-lg tabular-nums">{formatNumber(inst.mensagensHoje)}</div>
-            <div className="text-[10px] text-muted-foreground">Msg hoje</div>
-          </div>
-          <div className="rounded-lg bg-accent/40 p-3 text-center">
-            <Bot className="h-4 w-4 text-muted-foreground mx-auto mb-1" />
-            <div className="font-bold text-sm truncate">{inst.agenteAtribuido}</div>
-            <div className="text-[10px] text-muted-foreground">Agente</div>
-          </div>
-        </div>
-
-        <div className="text-xs text-muted-foreground mb-4">
-          Última conexão: {timeAgo(inst.ultimaConexao)}
-        </div>
-
-        {/* Actions */}
-        {connected ? (
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="flex-1"><RefreshCw className="h-3.5 w-3.5" /> Reconectar</Button>
-            <Button variant="outline" size="sm" className="flex-1">Trocar Sessão</Button>
-          </div>
-        ) : (
-          <Button variant="glow" size="sm" className="w-full">
-            <QrCode className="h-3.5 w-3.5" /> Escanear QR Code
-          </Button>
-        )}
-      </div>
-    </motion.div>
-  );
-}
+import { cn, formatNumber } from '@/lib/utils';
 
 const providers = [
   { id: 'z-api', name: 'Z-API', desc: 'API não-oficial estável, amplamente usada no Brasil', color: 'from-green-500/20 text-green-400', recommended: true },
@@ -93,21 +16,83 @@ const providers = [
   { id: 'ultramsg', name: 'UltraMsg', desc: 'API simples com suporte a envio em massa', color: 'from-purple-500/20 text-purple-400' },
 ];
 
+function QrCodeModal({ onClose }: { onClose: () => void }) {
+  const [qr, setQr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/whatsapp?action=qrcode')
+      .then(r => r.json())
+      .then(d => { setQr(d.qrcode ?? null); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+        className="relative w-80 rounded-2xl border border-border bg-card p-6 shadow-xl"
+      >
+        <button onClick={onClose} className="absolute top-3 right-3 text-muted-foreground hover:text-foreground">
+          <X className="h-5 w-5" />
+        </button>
+        <h3 className="font-bold text-lg mb-1">Escanear QR Code</h3>
+        <p className="text-xs text-muted-foreground mb-4">Abra o WhatsApp → Dispositivos vinculados → Vincular dispositivo</p>
+        <div className="flex items-center justify-center rounded-xl bg-white p-4 min-h-[220px]">
+          {loading ? (
+            <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+          ) : qr ? (
+            <img src={qr} alt="QR Code" className="w-full max-w-[180px]" />
+          ) : (
+            <div className="text-center text-sm text-gray-500">
+              <WifiOff className="h-8 w-8 mx-auto mb-2 text-gray-300" />
+              QR Code indisponível.<br />Verifique se o servidor Amanda está online.
+            </div>
+          )}
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-3 text-center">O QR Code expira em 60 segundos</p>
+      </motion.div>
+    </div>
+  );
+}
+
 export default function WhatsAppPage() {
+  const [status, setStatus] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [showQr, setShowQr] = useState(false);
+
+  const fetchStatus = useCallback(() => {
+    setLoading(true);
+    fetch('/api/whatsapp?action=status')
+      .then(r => r.json())
+      .then(d => { setStatus(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { fetchStatus(); }, [fetchStatus]);
+
+  const connected = status?.connected ?? false;
+  const stats = status?.stats;
+
   return (
     <div className="space-y-6">
       <PageHeader
-        title="WhatsApp APIs"
-        description="Gerencie instâncias e conexões WhatsApp"
-        actions={<Button variant="glow" size="sm"><Plus className="h-3.5 w-3.5" /> Nova Instância</Button>}
+        title="WhatsApp"
+        description="Status da conexão e gerenciamento de instância Z-API"
+        actions={
+          <Button variant="outline" size="sm" onClick={fetchStatus} disabled={loading}>
+            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} /> Atualizar
+          </Button>
+        }
       />
 
-      {/* Status summary */}
-      <div className="grid grid-cols-3 gap-3">
+      {/* Status cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Total Instâncias', value: whatsappInstances.length },
-          { label: 'Conectadas', value: whatsappInstances.filter(i => i.status === 'conectado').length, color: 'text-success' },
-          { label: 'Mensagens Hoje', value: formatNumber(whatsappInstances.reduce((a, b) => a + b.mensagensHoje, 0)) },
+          { label: 'Status', value: connected ? 'Conectado' : 'Offline', color: connected ? 'text-success' : 'text-destructive' },
+          { label: 'Clientes', value: stats?.total_clientes ?? '—' },
+          { label: 'Follow-ups pendentes', value: stats?.followups_pendentes ?? '—' },
+          { label: 'Handoffs ativos', value: stats?.handoffs_ativos ?? '—' },
         ].map((s, i) => (
           <motion.div key={s.label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
             className="rounded-xl border border-border glass p-4 text-center">
@@ -117,18 +102,43 @@ export default function WhatsAppPage() {
         ))}
       </div>
 
-      {/* Instance cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {whatsappInstances.map((inst, i) => <InstanceCard key={inst.id} inst={inst} index={i} />)}
+      {/* Main instance card */}
+      <Card className="glass">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className={cn('flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br',
+                connected ? 'from-green-500/20 to-emerald-500/10' : 'from-red-500/20 to-red-500/10')}>
+                <Smartphone className={cn('h-7 w-7', connected ? 'text-green-400' : 'text-red-400')} />
+              </div>
+              <div>
+                <h3 className="font-bold text-base">Instância Z-API (Amanda AI)</h3>
+                <div className="flex items-center gap-2 mt-1">
+                  <Badge variant={connected ? 'success' : 'destructive'} className="flex items-center gap-1 text-xs">
+                    {connected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+                    {connected ? 'Conectado' : 'Desconectado'}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">Provider: Z-API</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={fetchStatus} disabled={loading}>
+                <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} /> Reconectar
+              </Button>
+              <Button variant={connected ? 'outline' : 'glow'} size="sm" onClick={() => setShowQr(true)}>
+                <QrCode className="h-3.5 w-3.5" /> {connected ? 'Ver QR Code' : 'Escanear QR Code'}
+              </Button>
+            </div>
+          </div>
 
-        <motion.button
-          initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-          className="rounded-2xl border-2 border-dashed border-border hover:border-primary/50 transition-all p-8 flex flex-col items-center justify-center gap-3 text-muted-foreground hover:text-primary"
-        >
-          <Plus className="h-8 w-8" />
-          <div className="font-medium text-sm">Adicionar Instância</div>
-        </motion.button>
-      </div>
+          {!connected && (
+            <div className="mt-4 rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">
+              WhatsApp desconectado. Clique em "Escanear QR Code" e vincule o número no seu celular.
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Providers */}
       <Card className="glass">
@@ -149,6 +159,10 @@ export default function WhatsAppPage() {
           </div>
         </CardContent>
       </Card>
+
+      <AnimatePresence>
+        {showQr && <QrCodeModal onClose={() => setShowQr(false)} />}
+      </AnimatePresence>
     </div>
   );
 }
