@@ -1,84 +1,282 @@
 'use client';
 
+import { useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { FileBarChart, Download, Calendar, TrendingUp, Users, DollarSign, Bell } from 'lucide-react';
+import {
+  Users, MessageSquare, Send, PercentIcon, Download, RefreshCw, BarChart2,
+} from 'lucide-react';
 import { PageHeader } from '@/components/dashboard/page-header';
-import { Button } from '@/components/ui/button';
+import { KpiCard } from '@/components/dashboard/kpi-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { ColumnChart, GrowthAreaChart, GroupedBarChart } from '@/components/charts';
-import { growthSeries, salesBars, followupBars } from '@/lib/mock-data';
+import { GrowthAreaChart, ColumnChart, DonutChart, HorizontalBarChart } from '@/components/charts';
+import { cn, formatPercent } from '@/lib/utils';
 
-const reports = [
-  { id: 'diario', label: 'Diário', desc: 'Resumo do dia atual', icon: Calendar, badge: 'Hoje' },
-  { id: 'semanal', label: 'Semanal', desc: 'Últimos 7 dias', icon: Calendar, badge: 'Semana' },
-  { id: 'mensal', label: 'Mensal', desc: 'Últimos 30 dias', icon: Calendar, badge: 'Mês' },
-  { id: 'anual', label: 'Anual', desc: '12 meses correntes', icon: Calendar, badge: 'Ano' },
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface RelatorioData {
+  periodo: string;
+  novosClientes: number;
+  mensagensRecebidas: number;
+  followupsEnviados: number;
+  followupsRespondidos: number;
+  taxaResposta: number;
+  scoresMedio: number;
+  crescimentoSeries: { data: string; count: number }[];
+  followupSeries: { data: string; count: number }[];
+  topEmocoes: { name: string; value: number }[];
+  topCategorias: { name: string; value: number }[];
+}
+
+type Periodo = 'diario' | 'semanal' | 'mensal' | 'anual';
+
+const PERIODOS: { id: Periodo; label: string; badge: string }[] = [
+  { id: 'diario',  label: 'Diário',  badge: 'Hoje' },
+  { id: 'semanal', label: 'Semanal', badge: 'Semana' },
+  { id: 'mensal',  label: 'Mensal',  badge: 'Mês' },
+  { id: 'anual',   label: 'Anual',   badge: 'Ano' },
 ];
 
-const summaryMetrics = [
-  { label: 'Novos Clientes', value: '47', change: '+12%', icon: Users, color: 'text-primary' },
-  { label: 'Total Vendas', value: '128', change: '+8%', icon: TrendingUp, color: 'text-success' },
-  { label: 'Receita Estimada', value: 'R$ 36.8k', change: '+15%', icon: DollarSign, color: 'text-warning' },
-  { label: 'Follow-ups', value: '384', change: '-3%', icon: Bell, color: 'text-info' },
-];
+// ─── Período Content ──────────────────────────────────────────────────────────
+function PeriodoContent({ periodo }: { periodo: Periodo }) {
+  const [data, setData] = useState<RelatorioData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch(`/api/relatorios?periodo=${periodo}`);
+      if (!res.ok) throw new Error(`Erro ${res.status}`);
+      const json = await res.json();
+      setData(json);
+    } catch (e: any) {
+      setError(e.message ?? 'Erro desconhecido');
+    } finally {
+      setLoading(false);
+    }
+  }, [periodo]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const handleExport = (type: 'CSV' | 'XLSX') => {
+    // Toast-like behavior via console + alert — no toast library imported
+    console.info(`Exportando ${type} para período: ${periodo}`);
+  };
+
+  if (loading) {
+    return (
+      <div className="space-y-4 mt-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[1, 2, 3, 4].map(i => <div key={i} className="h-28 rounded-xl bg-white/5 animate-pulse" />)}
+        </div>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="h-72 rounded-2xl bg-white/5 animate-pulse" />
+          <div className="h-72 rounded-2xl bg-white/5 animate-pulse" />
+          <div className="h-60 rounded-2xl bg-white/5 animate-pulse" />
+          <div className="h-60 rounded-2xl bg-white/5 animate-pulse" />
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-4 mt-4">
+        <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-6 text-center max-w-sm">
+          <p className="text-destructive font-semibold mb-2">Erro ao carregar relatório</p>
+          <p className="text-sm text-muted-foreground mb-4">{error}</p>
+          <Button variant="outline" size="sm" onClick={fetchData}>
+            <RefreshCw className="h-4 w-4" />
+            Tentar novamente
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  // Map API data to chart-compatible formats
+  const crescimentoForChart = (data.crescimentoSeries ?? []).map(d => ({
+    date: d.data,
+    clientes: d.count,
+  }));
+
+  const followupForChart = (data.followupSeries ?? []).map(d => ({
+    mes: d.data,
+    vendas: d.count,
+  }));
+
+  const categoriasForChart = (data.topCategorias ?? []).map(c => ({
+    produto: c.name,
+    vistos: c.value,
+    citados: 0,
+  }));
+
+  const periodoLabel = PERIODOS.find(p => p.id === periodo)?.badge ?? periodo;
+
+  return (
+    <div className="space-y-6 mt-4">
+      {/* Header row */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <Badge variant="outline" className="text-xs">
+          {periodoLabel} · Atualizado agora
+        </Badge>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => handleExport('CSV')}>
+            <Download className="h-3.5 w-3.5" />
+            CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => handleExport('XLSX')}>
+            <Download className="h-3.5 w-3.5" />
+            XLSX
+          </Button>
+          <Button variant="ghost" size="sm" onClick={fetchData}>
+            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+          </Button>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <KpiCard
+          label="Novos Clientes"
+          value={data.novosClientes ?? 0}
+          icon={Users}
+          accent="primary"
+          index={0}
+        />
+        <KpiCard
+          label="Mensagens Recebidas"
+          value={data.mensagensRecebidas ?? 0}
+          icon={MessageSquare}
+          accent="info"
+          index={1}
+        />
+        <KpiCard
+          label="Follow-ups Enviados"
+          value={data.followupsEnviados ?? 0}
+          icon={Send}
+          accent="warning"
+          index={2}
+        />
+        <KpiCard
+          label="Taxa Resposta"
+          value={formatPercent(data.taxaResposta ?? 0)}
+          icon={PercentIcon}
+          accent="success"
+          index={3}
+        />
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <Card className="rounded-2xl border border-border bg-white/5 backdrop-blur-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Users className="h-4 w-4 text-primary" />
+              Crescimento de Clientes
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {crescimentoForChart.length === 0 ? (
+              <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">
+                Sem dados de crescimento
+              </div>
+            ) : (
+              <GrowthAreaChart
+                data={crescimentoForChart}
+                height={220}
+                series={[{ key: 'clientes', color: 'hsl(252 87% 67%)', name: 'Clientes' }]}
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-2xl border border-border bg-white/5 backdrop-blur-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Send className="h-4 w-4 text-warning" />
+              Follow-ups por Período
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {followupForChart.length === 0 ? (
+              <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">
+                Sem dados de follow-ups
+              </div>
+            ) : (
+              <ColumnChart
+                data={followupForChart}
+                height={220}
+                xKey="mes"
+                bars={[{ key: 'vendas', color: 'hsl(38 92% 50%)', name: 'Follow-ups' }]}
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-2xl border border-border bg-white/5 backdrop-blur-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <BarChart2 className="h-4 w-4 text-success" />
+              Top Emoções
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {(data.topEmocoes?.length ?? 0) === 0 ? (
+              <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">
+                Sem dados de emoções
+              </div>
+            ) : (
+              <DonutChart data={data.topEmocoes} height={240} />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-2xl border border-border bg-white/5 backdrop-blur-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <BarChart2 className="h-4 w-4 text-info" />
+              Top Categorias
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {categoriasForChart.length === 0 ? (
+              <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">
+                Sem dados de categorias
+              </div>
+            ) : (
+              <HorizontalBarChart data={categoriasForChart} height={240} xKey="produto" />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 export default function RelatoriosPage() {
   return (
     <div className="space-y-6">
       <PageHeader
         title="Relatórios"
-        description="Relatórios completos de performance e comportamento"
-        actions={<Button variant="glow" size="sm"><Download className="h-3.5 w-3.5" /> Exportar PDF</Button>}
+        description="Relatórios completos de performance e comportamento por período"
       />
 
       <Tabs defaultValue="mensal">
         <TabsList>
-          {reports.map(r => (
-            <TabsTrigger key={r.id} value={r.id}>{r.label}</TabsTrigger>
+          {PERIODOS.map(p => (
+            <TabsTrigger key={p.id} value={p.id}>{p.label}</TabsTrigger>
           ))}
         </TabsList>
-
-        {reports.map(r => (
-          <TabsContent key={r.id} value={r.id} className="space-y-6 mt-4">
-            <div className="flex items-center justify-between">
-              <Badge variant="outline" className="text-xs">{r.badge} · Atualizado agora</Badge>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm"><Download className="h-3.5 w-3.5" /> CSV</Button>
-                <Button variant="outline" size="sm"><Download className="h-3.5 w-3.5" /> XLSX</Button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {summaryMetrics.map((m, i) => {
-                const Icon = m.icon;
-                return (
-                  <motion.div key={m.label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-                    className="rounded-xl border border-border glass p-4">
-                    <Icon className={`h-4 w-4 mb-2 ${m.color}`} />
-                    <div className="text-2xl font-bold mb-0.5">{m.value}</div>
-                    <div className="text-xs text-muted-foreground">{m.label}</div>
-                    <Badge variant={m.change.startsWith('+') ? 'success' : 'destructive'} className="mt-1 text-[10px]">{m.change}</Badge>
-                  </motion.div>
-                );
-              })}
-            </div>
-
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              <Card className="glass">
-                <CardHeader className="pb-2"><CardTitle className="text-base">Crescimento de Clientes</CardTitle></CardHeader>
-                <CardContent><GrowthAreaChart data={growthSeries} height={220} /></CardContent>
-              </Card>
-              <Card className="glass">
-                <CardHeader className="pb-2"><CardTitle className="text-base">Vendas por Período</CardTitle></CardHeader>
-                <CardContent><ColumnChart data={salesBars} height={220} /></CardContent>
-              </Card>
-              <Card className="glass xl:col-span-2">
-                <CardHeader className="pb-2"><CardTitle className="text-base">Follow-ups Semanais</CardTitle></CardHeader>
-                <CardContent><GroupedBarChart data={followupBars} height={200} /></CardContent>
-              </Card>
-            </div>
+        {PERIODOS.map(p => (
+          <TabsContent key={p.id} value={p.id}>
+            <PeriodoContent periodo={p.id} />
           </TabsContent>
         ))}
       </Tabs>
