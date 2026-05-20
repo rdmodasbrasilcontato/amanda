@@ -73,7 +73,7 @@ export async function pontuar(
   );
 
   await query(
-    `INSERT INTO "pontuações_líderes"
+    `INSERT INTO lead_scores
        (cliente_id, mensagem_id, tipo_evento, pontos, score_resultante)
      VALUES ($1, $2, $3, $4, $5)`,
     [clienteId, mensagemId ?? null, evento, pontos, scoreNovo]
@@ -116,7 +116,7 @@ export async function buscarScore(clienteId: string): Promise<{
 
   const historico = await query<{ tipo_evento: string; pontos: number; criado_em: Date }>(
     `SELECT tipo_evento, pontos, criado_em
-     FROM "pontuações_líderes"
+     FROM lead_scores
      WHERE cliente_id = $1
      ORDER BY criado_em DESC
      LIMIT 20`,
