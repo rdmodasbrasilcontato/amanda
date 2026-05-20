@@ -31,6 +31,25 @@ export async function GET(req: Request) {
       q = q.or(`nome.ilike.%${search}%,telefone.ilike.%${search}%`);
     }
 
+    const emocao = searchParams.get('emocao') ?? '';
+    const minScore = searchParams.get('min_score') ?? '';
+    const categoria = searchParams.get('categoria') ?? '';
+
+    if (emocao) {
+      q = q.eq('emocao_recorrente', emocao);
+    }
+
+    if (minScore) {
+      const minScoreNum = parseInt(minScore);
+      if (!isNaN(minScoreNum)) {
+        q = q.gte('temperatura_lead', minScoreNum);
+      }
+    }
+
+    if (categoria) {
+      q = q.eq('categoria_favorita', categoria);
+    }
+
     // Filter by temperatura_lead based on status
     if (status === 'vip') {
       q = q.gte('temperatura_lead', 81);
