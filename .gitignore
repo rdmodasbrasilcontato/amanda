@@ -4,7 +4,7 @@ dist/
 .env.local
 .env.production
 *.log
-logs/
+/logs/
 media/uploads/
 coverage/
 .DS_Store

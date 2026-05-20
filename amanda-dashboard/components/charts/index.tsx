@@ -157,17 +157,25 @@ export function ColumnChart({ data, height = 280, bars, xKey = 'mes' }: BarProps
   );
 }
 
-export function HorizontalBarChart({ data, height = 280, xKey = 'produto' }: BarProps) {
+export function HorizontalBarChart({ data, height = 280, xKey = 'name', bars }: BarProps) {
+  const items = bars ?? [{ key: 'value', color: 'hsl(252 87% 67%)', name: 'Total' }];
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} layout="vertical" margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+        <defs>
+          <linearGradient id="hbar-gradient" x1="1" y1="0" x2="0" y2="0">
+            <stop offset="0%" stopColor="hsl(252 87% 67%)" />
+            <stop offset="100%" stopColor="hsl(280 80% 60%)" />
+          </linearGradient>
+        </defs>
         <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} horizontal={false} />
         <XAxis type="number" stroke={chartTheme.axis} fontSize={11} tickLine={false} axisLine={false} />
-        <YAxis type="category" dataKey={xKey} stroke={chartTheme.axis} fontSize={11} tickLine={false} axisLine={false} width={130} />
+        <YAxis type="category" dataKey={xKey} stroke={chartTheme.axis} fontSize={11} tickLine={false} axisLine={false} width={140} />
         <Tooltip contentStyle={chartTheme.tooltip} cursor={{ fill: 'hsl(252 87% 67% / 0.05)' }} />
-        <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} iconType="circle" />
-        <Bar dataKey="vistos" fill="hsl(252 87% 67%)" radius={[0, 6, 6, 0]} name="Vistos" />
-        <Bar dataKey="citados" fill="hsl(199 89% 48%)" radius={[0, 6, 6, 0]} name="Citados" />
+        {items.length > 1 && <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} iconType="circle" />}
+        {items.map((b, i) => (
+          <Bar key={b.key} dataKey={b.key} fill={i === 0 ? 'url(#hbar-gradient)' : b.color} radius={[0, 6, 6, 0]} name={b.name} />
+        ))}
       </BarChart>
     </ResponsiveContainer>
   );
