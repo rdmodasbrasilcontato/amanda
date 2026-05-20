@@ -54,5 +54,39 @@ module.exports = {
       interpreter: 'node',
       interpreter_args: '--max-old-space-size=512',
     },
+
+    // ── Dashboard Next.js ────────────────────────────────
+    {
+      name: 'amanda-dashboard',
+      script: 'amanda-dashboard/dashboard-start.js',
+      cwd: __dirname,
+
+      instances: 1,
+      exec_mode: 'fork',
+
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      min_uptime: '15s',
+      restart_delay: 5000,
+
+      max_memory_restart: '512M',
+
+      env: {
+        NODE_ENV: 'production',
+        DASHBOARD_PORT: 3001,
+      },
+
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      out_file: './logs/dashboard-out.log',
+      error_file: './logs/dashboard-error.log',
+      merge_logs: true,
+
+      kill_timeout: 5000,
+      listen_timeout: 30000,
+
+      interpreter: 'node',
+      interpreter_args: '--max-old-space-size=512',
+    },
   ],
 };
