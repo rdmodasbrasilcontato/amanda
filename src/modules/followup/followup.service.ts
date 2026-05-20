@@ -143,9 +143,14 @@ export async function processDueFollowups(): Promise<void> {
   logger.debug({ total: vencidos.length }, 'Follow-ups vencidos para processar');
 
   for (const followup of vencidos) {
-    await processarFollowup(followup).catch(err =>
-      logger.error({ err, followupId: followup.id }, 'Erro ao processar follow-up')
-    );
+    await processarFollowup(followup).catch(async err => {
+      logger.error({ err, followupId: followup.id }, 'Erro ao processar follow-up');
+      // Marca como falhou para não ficar em loop infinito a cada 5 min
+      await query(
+        `UPDATE followups SET status = 'falhou', tentativas = tentativas + 1, atualizado_em = NOW() WHERE id = $1`,
+        [followup.id]
+      ).catch(() => {});
+    });
   }
 }
 
@@ -203,10 +208,10 @@ async function processarFollowup(followup: {
 
     // ── Log de envio ──────────────────────────────────
     await query(
-      `INSERT INTO followup_logs (followup_id, cliente_id, mensagem, status)
-       VALUES ($1, $2, $3, 'enviado')`,
+      `INSERT INTO followup_logs (followup_id, cliente_id, mensagem, status, criado_em)
+       VALUES ($1, $2, $3, 'enviado', NOW())`,
       [followup.id, followup.cliente_id, mensagemGerada]
-    );
+    ).catch(e => logger.warn({ e }, 'Falha ao gravar followup_log'));
 
     // ── Atualizar perfil ──────────────────────────────
     await query(
@@ -214,7 +219,7 @@ async function processarFollowup(followup: {
        SET total_followups = total_followups + 1, atualizado_em = NOW()
        WHERE cliente_id = $1`,
       [followup.cliente_id]
-    );
+    ).catch(() => {});
 
     // ── Agendar próximo follow-up (loop infinito) ─────
     const proximaEt = proximaEtapa(followup.etapa);
