@@ -72,7 +72,12 @@ export function MultiLineChart({ data, height = 280, series }: LineProps) {
   );
 }
 
-interface PieProps { data: { name: string; value: number; color: string }[]; height?: number; innerRadius?: number }
+const DEFAULT_COLORS = [
+  'hsl(252 87% 67%)', 'hsl(199 89% 48%)', 'hsl(142 71% 45%)', 'hsl(38 92% 50%)',
+  'hsl(0 84% 60%)', 'hsl(280 80% 60%)', 'hsl(160 60% 45%)', 'hsl(220 70% 55%)',
+];
+
+interface PieProps { data: { name: string; value: number; color?: string }[]; height?: number; innerRadius?: number }
 
 export function DonutChart({ data, height = 260, innerRadius = 60 }: PieProps) {
   return (
@@ -90,7 +95,7 @@ export function DonutChart({ data, height = 260, innerRadius = 60 }: PieProps) {
           strokeWidth={0}
         >
           {data.map((entry, i) => (
-            <Cell key={i} fill={entry.color} />
+            <Cell key={i} fill={entry.color ?? DEFAULT_COLORS[i % DEFAULT_COLORS.length]} />
           ))}
         </Pie>
         <Tooltip contentStyle={chartTheme.tooltip} />

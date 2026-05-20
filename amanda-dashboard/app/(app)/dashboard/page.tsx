@@ -1,23 +1,18 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Users, MessageSquare, Bell, TrendingUp, RefreshCw, DollarSign, Zap, Flame, Thermometer, Snowflake, Bot, Smartphone, Star } from 'lucide-react';
+import {
+  Users, MessageSquare, Bell, TrendingUp, RefreshCw,
+  Flame, Thermometer, Snowflake, AlertCircle,
+} from 'lucide-react';
 import { motion } from 'framer-motion';
 import { KpiCard } from '@/components/dashboard/kpi-card';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import {
-  GrowthAreaChart, DonutChart, GroupedBarChart, ColumnChart,
-  HorizontalBarChart, VectorScatterChart, MultiLineChart,
-} from '@/components/charts';
-import {
-  dashboardKpis, growthSeries as mockGrowth, emotionPie as mockEmotionPie,
-  categoryPie, leadStatusPie, intentionPie, behaviorPie, followupBars,
-  productBars, salesBars, emotionalEvolution, emotionScatter,
-} from '@/lib/mock-data';
-import { formatCurrency, timeAgo } from '@/lib/utils';
+import { GrowthAreaChart, DonutChart } from '@/components/charts';
+import { timeAgo } from '@/lib/utils';
 
 interface DashboardData {
   kpis: {
@@ -34,24 +29,31 @@ interface DashboardData {
   recentClients?: any[];
 }
 
+const emotionEmoji: Record<string, string> = {
+  animado: '😊', curioso: '🤔', indeciso: '😕', frustrado: '😠',
+  satisfeito: '😌', urgente: '⚡', neutro: '😐',
+};
+
 export default function DashboardPage() {
   const [apiData, setApiData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const [dashRes, clientesRes] = await Promise.all([
         fetch('/api/dashboard'),
         fetch('/api/clientes?page=1&limit=6'),
       ]);
-      if (dashRes.ok) {
-        const dash = await dashRes.json();
-        const clientes = clientesRes.ok ? (await clientesRes.json()).clientes : [];
-        setApiData({ ...dash, recentClients: clientes });
-      }
-    } catch {
-      // Mantém dados mockados em caso de erro
+      if (!dashRes.ok) throw new Error(`Erro ao carregar dashboard: ${dashRes.status}`);
+      const dash = await dashRes.json();
+      if (dash.error) throw new Error(dash.error);
+      const clientes = clientesRes.ok ? (await clientesRes.json()).clientes ?? [] : [];
+      setApiData({ ...dash, recentClients: clientes });
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -59,22 +61,11 @@ export default function DashboardPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // KPIs: usa real se disponível, senão mock
   const kpis = apiData?.kpis;
-  const totalClientes    = kpis?.totalClientes    ?? dashboardKpis.totalClientes.value;
-  const totalMensagens   = kpis?.totalMensagens   ?? dashboardKpis.totalMensagens.value;
-  const totalFollowups   = kpis?.totalFollowups   ?? dashboardKpis.totalFollowups.value;
-  const taxaResposta     = kpis?.taxaResposta      ?? dashboardKpis.taxaResposta.value;
-  const clientesQuentes  = kpis?.clientesQuentes   ?? dashboardKpis.clientesQuentes.value;
-  const clientesMornos   = kpis?.clientesMornos    ?? dashboardKpis.clientesMornos.value;
-  const clientesFrios    = kpis?.clientesFrios      ?? dashboardKpis.clientesFrios.value;
-
-  // Gráficos
-  const growth = apiData?.growthSeries ?? mockGrowth;
+  const growth = apiData?.growthSeries ?? [];
   const emotionPieData = apiData?.emotionCount
     ? Object.entries(apiData.emotionCount).map(([name, value]) => ({ name, value }))
-    : mockEmotionPie;
-
+    : [];
   const recentClients = apiData?.recentClients ?? [];
 
   return (
@@ -87,204 +78,136 @@ export default function DashboardPage() {
             <Button variant="outline" size="sm" onClick={fetchData} disabled={loading}>
               <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Atualizar
             </Button>
-            <Button variant="glow" size="sm">Exportar Relatório</Button>
           </div>
         }
       />
 
-      {/* ── KPIs Row 1 ─────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3">
-        <KpiCard label="Total Clientes"   value={totalClientes}   icon={Users}         accent="primary" index={0} />
-        <KpiCard label="Total Leads"      value={dashboardKpis.totalLeads.value} change={dashboardKpis.totalLeads.change} icon={TrendingUp} accent="info" index={1} />
-        <KpiCard label="Mensagens"        value={totalMensagens}  icon={MessageSquare} accent="success" index={2} />
-        <KpiCard label="Follow-ups"       value={totalFollowups}  icon={Bell}          accent="warning" index={3} />
-        <KpiCard label="Taxa Resposta"    value={taxaResposta}    icon={Zap}           accent="primary" suffix="%" index={4} />
-        <KpiCard label="Reativação"       value={dashboardKpis.taxaReativacao.value} change={dashboardKpis.taxaReativacao.change} icon={RefreshCw} accent="success" suffix="%" index={5} />
-        <KpiCard label="Ticket Médio"     value={formatCurrency(dashboardKpis.ticketMedio.value)} change={dashboardKpis.ticketMedio.change} icon={DollarSign} accent="warm" index={6} />
-      </div>
+      {/* Error state */}
+      {error && !loading && (
+        <div className="flex items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/10 p-4">
+          <AlertCircle className="h-5 w-5 text-destructive shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm text-destructive">{error}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Verifique a conexão com o Supabase</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={fetchData}>Tentar novamente</Button>
+        </div>
+      )}
 
-      {/* ── KPIs Row 2 ─────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3">
-        <KpiCard label="Score Médio"      value={dashboardKpis.scoreMedio.value} change={dashboardKpis.scoreMedio.change} icon={Star} accent="warning" index={7} />
-        <KpiCard label="Clientes Ativos"  value={dashboardKpis.clientesAtivos.value} change={dashboardKpis.clientesAtivos.change} icon={Users} accent="success" index={8} />
-        <KpiCard label="Clientes Quentes" value={clientesQuentes}  icon={Flame}       accent="hot"     index={9} />
-        <KpiCard label="Clientes Mornos"  value={clientesMornos}   icon={Thermometer} accent="warm"    index={10} />
-        <KpiCard label="Clientes Frios"   value={clientesFrios}    icon={Snowflake}   accent="cold"    index={11} />
-        <KpiCard label="Agentes Ativos"   value={dashboardKpis.agentesAtivos.value} icon={Bot} accent="primary" index={12} />
-        <KpiCard label="Núm. Conectados"  value={dashboardKpis.numerosConectados.value} icon={Smartphone} accent="success" index={13} />
-      </div>
+      {/* Loading skeleton */}
+      {loading && !apiData && (
+        <div className="flex items-center justify-center py-20">
+          <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+          <span className="ml-3 text-muted-foreground">Carregando dados...</span>
+        </div>
+      )}
 
-      {/* ── Main Charts ─────────────────────────────── */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <Card className="xl:col-span-2 glass">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Crescimento Diário</CardTitle>
-            <CardDescription>Clientes e mensagens nos últimos 30 dias</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <GrowthAreaChart data={growth} />
-          </CardContent>
-        </Card>
+      {/* KPIs Row 1 */}
+      {(apiData || !loading) && (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3">
+            <KpiCard label="Total Clientes"   value={kpis?.totalClientes ?? 0}   icon={Users}         accent="primary"  index={0} />
+            <KpiCard label="Total Mensagens"  value={kpis?.totalMensagens ?? 0}  icon={MessageSquare} accent="success"  index={1} />
+            <KpiCard label="Follow-ups"       value={kpis?.totalFollowups ?? 0}  icon={Bell}          accent="warning"  index={2} />
+            <KpiCard label="Taxa Resposta"    value={kpis?.taxaResposta ?? 0}    icon={TrendingUp}    accent="primary"  suffix="%" index={3} />
+            <KpiCard label="Clientes Quentes" value={kpis?.clientesQuentes ?? 0} icon={Flame}         accent="hot"      index={4} />
+            <KpiCard label="Clientes Mornos"  value={kpis?.clientesMornos ?? 0}  icon={Thermometer}   accent="warm"     index={5} />
+            <KpiCard label="Clientes Frios"   value={kpis?.clientesFrios ?? 0}   icon={Snowflake}     accent="cold"     index={6} />
+          </div>
 
-        <Card className="glass">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Emoções Predominantes</CardTitle>
-            <CardDescription>Distribuição emocional dos clientes</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <DonutChart data={emotionPieData} />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ── Row 3 ───────────────────────────────────── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <Card className="glass">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Status dos Leads</CardTitle>
-            <CardDescription>Temperatura da base de clientes</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <DonutChart data={leadStatusPie} innerRadius={50} />
-          </CardContent>
-        </Card>
-
-        <Card className="glass">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Intenção Detectada</CardTitle>
-            <CardDescription>Objetivo da última interação</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <DonutChart data={intentionPie} innerRadius={50} />
-          </CardContent>
-        </Card>
-
-        <Card className="glass">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Categorias Favoritas</CardTitle>
-            <CardDescription>Produtos mais buscados</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <DonutChart data={categoryPie} innerRadius={50} />
-          </CardContent>
-        </Card>
-
-        <Card className="glass">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Comportamento</CardTitle>
-            <CardDescription>Perfil comportamental dos clientes</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <DonutChart data={behaviorPie} innerRadius={50} />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ── Row 4 ───────────────────────────────────── */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <Card className="glass">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Follow-ups por Dia</CardTitle>
-            <CardDescription>Enviados vs respondidos na última semana</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <GroupedBarChart data={followupBars} />
-          </CardContent>
-        </Card>
-
-        <Card className="glass">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Evolução Emocional</CardTitle>
-            <CardDescription>Emoções ao longo dos últimos 14 dias</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <MultiLineChart data={emotionalEvolution} series={[
-              { key: 'animado',    color: 'hsl(252 87% 67%)', name: 'Animado'   },
-              { key: 'curioso',    color: 'hsl(199 89% 48%)', name: 'Curioso'   },
-              { key: 'satisfeito', color: 'hsl(142 71% 45%)', name: 'Satisfeito'},
-              { key: 'frustrado',  color: 'hsl(0 84% 60%)',   name: 'Frustrado' },
-            ]} />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ── Row 5 ───────────────────────────────────── */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <Card className="glass">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Produtos Mais Vistos</CardTitle>
-            <CardDescription>Menções e visualizações por produto</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <HorizontalBarChart data={productBars} xKey="produto" />
-          </CardContent>
-        </Card>
-
-        <Card className="glass">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Vendas Mensais</CardTitle>
-            <CardDescription>Número de vendas por mês no ano</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ColumnChart data={salesBars} bars={[
-              { key: 'vendas', color: 'hsl(252 87% 67%)', name: 'Vendas' },
-            ]} />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ── Row 6: Scatter + Recent ──────────────────── */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <Card className="xl:col-span-2 glass">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Score vs Engajamento</CardTitle>
-            <CardDescription>Mapa vetorial de correlação entre score e engajamento dos clientes</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <VectorScatterChart
-              data={emotionScatter}
-              xKey="emocao" yKey="engajamento"
-              xName="Score Emocional" yName="Engajamento"
-            />
-          </CardContent>
-        </Card>
-
-        <Card className="glass">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Atividade Recente</CardTitle>
-            <CardDescription>Últimas interações</CardDescription>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="divide-y divide-border">
-              {recentClients.length === 0 ? (
-                <div className="px-6 py-8 text-center text-sm text-muted-foreground">
-                  {loading ? 'Carregando...' : 'Nenhuma interação recente'}
-                </div>
-              ) : recentClients.map((c: any) => (
-                <div key={c.id} className="flex items-center gap-3 px-6 py-3 hover:bg-accent/50 transition-colors cursor-pointer">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary/20 to-fuchsia-500/20 text-xs font-semibold">
-                    {(c.nome ?? '?').split(' ').map((n: string) => n[0]).slice(0, 2).join('')}
+          {/* Main Charts */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <Card className="xl:col-span-2 glass">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Crescimento Diário</CardTitle>
+                <CardDescription>Clientes e mensagens nos últimos 30 dias</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {growth.length > 0 ? (
+                  <GrowthAreaChart data={growth} />
+                ) : loading ? (
+                  <div className="h-64 flex items-center justify-center text-sm text-muted-foreground">
+                    <RefreshCw className="h-4 w-4 animate-spin mr-2" /> Carregando gráfico...
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium truncate">{c.nome}</div>
-                    <div className="text-xs text-muted-foreground">Score {c.leadScore}</div>
+                ) : (
+                  <div className="h-64 flex items-center justify-center text-sm text-muted-foreground">
+                    Sem dados de crescimento
                   </div>
-                  <div className="text-right shrink-0">
-                    <Badge variant={
-                      c.emocaoDominante === 'animado'    ? 'success'     :
-                      c.emocaoDominante === 'frustrado'  ? 'destructive' :
-                      c.emocaoDominante === 'urgente'    ? 'hot'         : 'default'
-                    } className="mb-1 text-[10px]">
-                      {c.emocaoDominante}
-                    </Badge>
-                    <div className="text-[10px] text-muted-foreground">{timeAgo(c.ultimaInteracao)}</div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="glass">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Emoções Predominantes</CardTitle>
+                <CardDescription>Distribuição emocional dos clientes</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {emotionPieData.length > 0 ? (
+                  <DonutChart data={emotionPieData} />
+                ) : loading ? (
+                  <div className="h-64 flex items-center justify-center text-sm text-muted-foreground">
+                    <RefreshCw className="h-4 w-4 animate-spin mr-2" /> Carregando...
                   </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+                ) : (
+                  <div className="h-64 flex items-center justify-center text-sm text-muted-foreground">
+                    Sem dados emocionais
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Recent activity */}
+          <Card className="glass">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Atividade Recente</CardTitle>
+              <CardDescription>Últimas interações com clientes</CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y divide-border">
+                {recentClients.length === 0 ? (
+                  <div className="px-6 py-8 text-center text-sm text-muted-foreground">
+                    {loading ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <RefreshCw className="h-4 w-4 animate-spin" /> Carregando...
+                      </span>
+                    ) : 'Nenhuma interação recente'}
+                  </div>
+                ) : recentClients.map((c: any, i: number) => (
+                  <motion.div
+                    key={c.id}
+                    initial={{ opacity: 0, x: -4 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="flex items-center gap-3 px-6 py-3 hover:bg-accent/50 transition-colors cursor-pointer"
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary/20 to-fuchsia-500/20 text-xs font-semibold">
+                      {(c.nome ?? '?').split(' ').map((n: string) => n[0]).slice(0, 2).join('')}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">{c.nome}</div>
+                      <div className="text-xs text-muted-foreground">Score {c.leadScore}</div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <Badge variant={
+                        c.emocaoDominante === 'animado'    ? 'success'     :
+                        c.emocaoDominante === 'frustrado'  ? 'destructive' :
+                        c.emocaoDominante === 'urgente'    ? 'hot'         : 'default'
+                      } className="mb-1 text-[10px]">
+                        {emotionEmoji[c.emocaoDominante] ?? '😐'} {c.emocaoDominante}
+                      </Badge>
+                      <div className="text-[10px] text-muted-foreground">
+                        {c.ultimaInteracao ? timeAgo(c.ultimaInteracao) : '—'}
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

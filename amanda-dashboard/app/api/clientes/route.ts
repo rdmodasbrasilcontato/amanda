@@ -8,6 +8,7 @@ export async function GET(req: Request) {
     const page = parseInt(searchParams.get('page') ?? '1');
     const limit = parseInt(searchParams.get('limit') ?? '50');
     const search = searchParams.get('search') ?? '';
+    const status = searchParams.get('status') ?? '';
 
     let q = sb
       .from('clientes')
@@ -28,6 +29,17 @@ export async function GET(req: Request) {
 
     if (search) {
       q = q.or(`nome.ilike.%${search}%,telefone.ilike.%${search}%`);
+    }
+
+    // Filter by temperatura_lead based on status
+    if (status === 'vip') {
+      q = q.gte('temperatura_lead', 81);
+    } else if (status === 'quente') {
+      q = q.gte('temperatura_lead', 51).lt('temperatura_lead', 81);
+    } else if (status === 'morno') {
+      q = q.gte('temperatura_lead', 21).lt('temperatura_lead', 51);
+    } else if (status === 'frio') {
+      q = q.lt('temperatura_lead', 21);
     }
 
     const { data, error, count } = await q;
